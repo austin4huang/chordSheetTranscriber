@@ -66,6 +66,14 @@ interface Props {
   onPresentingChange: Dispatch<SetStateAction<boolean>>;
   split: number;
   onSplitChange: Dispatch<SetStateAction<number>>;
+  /** Chosen display (transposed) key + accidental spelling. Owned by the
+   *  parent so a key picked while leading a set carries to the next song
+   *  instead of resetting. Empty string = "not chosen yet" (use the song's
+   *  own key). */
+  displayKey: string;
+  onDisplayKeyChange: Dispatch<SetStateAction<string>>;
+  preferFlats: boolean;
+  onPreferFlatsChange: Dispatch<SetStateAction<boolean>>;
 }
 
 export function SheetEditor({
@@ -81,6 +89,10 @@ export function SheetEditor({
   onPresentingChange,
   split,
   onSplitChange,
+  displayKey,
+  onDisplayKeyChange,
+  preferFlats,
+  onPreferFlatsChange,
 }: Props) {
   const [text, setText] = useState(() => linesToText(initial));
   // Text as of the last save, for dirty-tracking and the Save button state.
@@ -95,9 +107,11 @@ export function SheetEditor({
   const annoKey = JSON.stringify([annotations, texts]);
   const dirty = text !== savedText || annoKey !== savedAnno;
   const setNumberMode = onNumberModeChange;
-  const [displayKey, setDisplayKey] = useState(initial.key);
-  // Preferred accidental spelling for enharmonic keys (♯ vs ♭).
-  const [preferFlats, setPreferFlats] = useState(() => isFlatSpelling(initial.key));
+  // displayKey / preferFlats are parent-owned so they persist across songs
+  // in a set (see Props). They're seeded from the song's own key the first
+  // time a song is opened (when displayKey is still "").
+  const setDisplayKey = onDisplayKeyChange;
+  const setPreferFlats = onPreferFlatsChange;
   const setEditorHidden = onEditorHiddenChange;
   const setPresenting = onPresentingChange;
 
@@ -145,15 +159,34 @@ export function SheetEditor({
     return textToSheet(text, initial);
   }, [text, initial]);
 
-  // When the song's actual key changes (parsed from a {key:} directive),
-  // reset the display key to it. Done during render (React's recommended
-  // pattern for syncing state to a prop) rather than in an effect.
-  const [prevSongKey, setPrevSongKey] = useState(sheet.key);
-  if (sheet.key !== prevSongKey) {
-    setPrevSongKey(sheet.key);
-    setDisplayKey(sheet.key);
-    setPreferFlats(isFlatSpelling(sheet.key));
-  }
+  // displayKey/preferFlats live in the parent (persist across a set), so they
+  // must be updated from EFFECTS, never during render — setting a parent's
+  // state while rendering this child throws and loops.
+  //
+  // Use the song's own key until one is chosen/carried.
+  const activeKey = displayKey || sheet.key;
+
+  // Seed once on mount when nothing is carried yet (a fresh song / new set).
+  useEffect(() => {
+    if (!displayKey) {
+      setDisplayKey(sheet.key);
+      setPreferFlats(isFlatSpelling(sheet.key));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Follow the {key:} directive when it's edited within *this* song. The ref
+  // starts at the mounted song's key, so navigating songs (remount) doesn't
+  // clobber the carried key — only an in-song edit does.
+  const songKeyRef = useRef(sheet.key);
+  useEffect(() => {
+    if (sheet.key !== songKeyRef.current) {
+      songKeyRef.current = sheet.key;
+      setDisplayKey(sheet.key);
+      setPreferFlats(isFlatSpelling(sheet.key));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sheet.key]);
 
   const onSave = () => {
     const toSave = { ...sheet, annotations, texts, updatedAt: Date.now() };
@@ -210,19 +243,21 @@ export function SheetEditor({
   // spelling it with the preferred accidental.
   const stepKey = useCallback(
     (delta: number) => {
-      setDisplayKey((cur) => spellKey((keyIndex(cur) + delta + 12) % 12, preferFlats));
+      setDisplayKey((cur) =>
+        spellKey((keyIndex(cur || sheet.key) + delta + 12) % 12, preferFlats),
+      );
     },
-    [preferFlats],
+    [preferFlats, sheet.key],
   );
   // Pick the ♯ or ♭ spelling for the current key.
   const setAccidental = useCallback(
     (flats: boolean) => {
       setPreferFlats(flats);
-      setDisplayKey((cur) => spellKey(keyIndex(cur), flats));
+      setDisplayKey((cur) => spellKey(keyIndex(cur || sheet.key), flats));
     },
-    [],
+    [sheet.key],
   );
-  const pc = keyIndex(displayKey);
+  const pc = keyIndex(activeKey);
   const isEnharmonic = ENHARMONIC.has(pc);
   // Compare by pitch class so an enharmonic spelling of the song key isn't
   // treated as transposed.
@@ -436,7 +471,7 @@ export function SheetEditor({
           <SheetRenderer
             sheet={sheet}
             numberMode={numberMode}
-            displayKey={displayKey}
+            displayKey={activeKey}
             annotations={annotations}
             onAnnotationsChange={setAnnotations}
             texts={texts}
@@ -480,7 +515,7 @@ export function SheetEditor({
             <SheetRenderer
               sheet={sheet}
               numberMode={numberMode}
-              displayKey={displayKey}
+              displayKey={activeKey}
               annotations={annotations}
               onAnnotationsChange={setAnnotations}
             texts={texts}

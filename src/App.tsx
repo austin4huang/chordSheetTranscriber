@@ -17,6 +17,10 @@ export default function App() {
   const [editorHidden, setEditorHidden] = useState(false);
   const [presenting, setPresenting] = useState(false);
   const [split, setSplit] = useState(50);
+  // "" until a key is chosen; then it carries across songs in a set.
+  const [displayKey, setDisplayKey] = useState("");
+  const [preferFlats, setPreferFlats] = useState(false);
+  const [keyScopeSetId, setKeyScopeSetId] = useState<string | null>(null);
 
   // Request persistent storage and adopt a linked device folder (if any)
   // once per app load.
@@ -30,6 +34,17 @@ export default function App() {
         onOpen={(sheetId, setId = null) => setView({ kind: "edit", sheetId, setId })}
       />
     );
+  }
+
+  // Scope the carried display key: it's shared across songs in the same set,
+  // but a standalone song is its own scope. Reset only when that scope token
+  // actually changes (not every render — that would fight SheetEditor's
+  // seed-from-song-key and loop).
+  const keyScope = view.setId ?? `solo:${view.sheetId}`;
+  if (keyScope !== keyScopeSetId) {
+    setKeyScopeSetId(keyScope);
+    setDisplayKey("");
+    setPreferFlats(false);
   }
 
   const sheet = getSheet(view.sheetId);
@@ -72,6 +87,10 @@ export default function App() {
       onPresentingChange={setPresenting}
       split={split}
       onSplitChange={setSplit}
+      displayKey={displayKey}
+      onDisplayKeyChange={setDisplayKey}
+      preferFlats={preferFlats}
+      onPreferFlatsChange={setPreferFlats}
       onBack={() => setView({ kind: "list" })}
       onSaved={(s) => setView({ kind: "edit", sheetId: s.id, setId: view.setId })}
     />
