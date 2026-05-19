@@ -1,0 +1,366 @@
+.editor-root { display: flex; flex-direction: column; height: 100vh; }
+.editor-toolbar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.55rem 1rem;
+  background: #2a2a2a;
+  color: #fff;
+  border-bottom: 1px solid #444;
+}
+.editor-toolbar .spacer { flex: 1; }
+.tb-group { display: flex; align-items: center; gap: 0.6rem; }
+/* Three-region toolbar: left cluster, centered key/notation controls, and
+   right-aligned save/segment controls. Equal flex-grow on the two side
+   regions keeps the center optically centered WITHOUT absolute positioning,
+   so a long title can never overlap the set-nav or key controls. */
+.tb-left,
+.tb-center,
+.tb-right {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.tb-left { order: 1; flex: 1 1 0; min-width: 0; }
+.tb-center { order: 2; flex: 0 0 auto; }
+.tb-right { order: 3; flex: 1 1 0; min-width: 0; justify-content: flex-end; }
+.tb-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #e8e8e8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* tb-left has min-width:0, so the title shrinks/ellipsizes here when the
+     window is tight instead of pushing the set-nav into the key controls. */
+  max-width: 28ch;
+  flex-shrink: 1;
+  min-width: 0;
+}
+.tb-divider {
+  width: 1px;
+  align-self: stretch;
+  background: #4a4a4a;
+  margin: -0.55rem 0;
+}
+.tb-setnav {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 0.35rem;
+  padding: 0.15rem 0.35rem;
+  background: #1f1f1f;
+  border: 1px solid #4a4a4a;
+  border-radius: 6px;
+}
+.editor-toolbar .tb-nav {
+  padding: 0.15rem 0.5rem;
+  font-size: 1rem;
+  line-height: 1;
+  background: #3d3d3d;
+}
+.editor-toolbar .tb-nav:disabled { opacity: 0.35; cursor: default; filter: none; }
+.tb-setpos { font-size: 0.78rem; color: #cfcfcf; font-variant-numeric: tabular-nums; }
+
+/* Set navigation while presenting full screen. */
+.present-setnav {
+  position: fixed;
+  top: 0.9rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1001;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.9rem;
+  color: #444;
+}
+.present-setnav button {
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid #dcdcdc;
+  color: #333;
+  padding: 0.35rem 0.8rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.present-setnav button:hover:not(:disabled) { background: rgba(0, 0, 0, 0.1); }
+.present-setnav button:disabled { opacity: 0.35; cursor: default; }
+.editor-toolbar button {
+  background: #3d3d3d;
+  color: #fff;
+  border: 1px solid #555;
+  padding: 0.42rem 0.9rem;
+  border-radius: 6px;
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: filter 0.12s;
+}
+.editor-toolbar button.primary { background: #2a6cdc; border-color: #2a6cdc; font-weight: 600; }
+.editor-toolbar button:hover { filter: brightness(1.15); }
+
+/* Save button: enabled (●) only with unsaved edits, flashes green ✓ after a
+   save, then settles into a disabled "Saved" state. */
+.editor-toolbar .save-btn {
+  min-width: 6.5rem;
+  transition: background 0.18s, border-color 0.18s, opacity 0.18s;
+}
+.editor-toolbar .save-btn:disabled {
+  background: #333;
+  border-color: #4a4a4a;
+  color: #8a8a8a;
+  font-weight: 500;
+  cursor: default;
+  filter: none;
+}
+.editor-toolbar .save-btn.is-saved,
+.editor-toolbar .save-btn.is-saved:disabled {
+  background: #1f9d57;
+  border-color: #1f9d57;
+  color: #fff;
+  font-weight: 600;
+  opacity: 1;
+}
+
+/* Editor show/hide toggle: reads as "panel on/off" — highlighted when the
+   editor pane is visible, muted when collapsed. */
+.editor-toolbar .tb-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: #333;
+  border-color: #4a4a4a;
+  color: #cfcfcf;
+}
+.editor-toolbar .tb-toggle-btn .tb-toggle-icon {
+  font-size: 1rem;
+  line-height: 1;
+  color: #7a7a7a;
+  transition: color 0.12s;
+}
+.editor-toolbar .tb-toggle-btn.active {
+  background: #2f4368;
+  border-color: #3a5a92;
+  color: #fff;
+}
+.editor-toolbar .tb-toggle-btn.active .tb-toggle-icon { color: #6fa8ff; }
+.editor-toolbar .tb-toggle-btn:hover { filter: brightness(1.12); }
+
+/* Square icon-only button (Present). */
+.editor-toolbar .tb-icon-btn {
+  padding: 0.42rem 0.6rem;
+  font-size: 1.05rem;
+  line-height: 1;
+  background: #3d3d3d;
+}
+.tb-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #9a9a9a;
+}
+
+/* Visual key transposer: − [ E ] + */
+.key-stepper {
+  display: inline-flex;
+  align-items: stretch;
+  background: #1a1a1a;
+  border: 1px solid #555;
+  border-radius: 7px;
+  overflow: hidden;
+}
+.editor-toolbar .key-stepper .key-step {
+  background: transparent;
+  border: none;
+  color: #cfcfcf;
+  font-size: 1.05rem;
+  line-height: 1;
+  padding: 0 0.6rem;
+  border-radius: 0;
+  cursor: pointer;
+}
+.editor-toolbar .key-stepper .key-step:hover { background: #333; filter: none; }
+.editor-toolbar .key-stepper .key-step:disabled { color: #555; cursor: not-allowed; background: transparent; }
+.key-stepper .key-value {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-left: 1px solid #3a3a3a;
+  border-right: 1px solid #3a3a3a;
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.95rem;
+  text-align: center;
+  text-align-last: center;
+  padding: 0.35rem 0.6rem;
+  min-width: 6ch;
+  cursor: pointer;
+}
+.key-stepper .key-value:disabled { color: #666; cursor: not-allowed; }
+.key-stepper.is-off { opacity: 0.5; }
+
+/* ♯ / ♭ spelling chooser for enharmonic keys. */
+.acc-toggle {
+  display: inline-flex;
+  border: 1px solid #555;
+  border-radius: 7px;
+  overflow: hidden;
+}
+.editor-toolbar .acc-toggle button {
+  background: #1a1a1a;
+  border: none;
+  border-radius: 0;
+  color: #b9b9b9;
+  font-size: 0.95rem;
+  line-height: 1;
+  padding: 0.4rem 0.55rem;
+}
+.editor-toolbar .acc-toggle button + button { border-left: 1px solid #3a3a3a; }
+.editor-toolbar .acc-toggle button:hover:not(:disabled) { background: #2f2f2f; filter: none; }
+.editor-toolbar .acc-toggle button.active {
+  background: #2a6cdc;
+  color: #fff;
+  font-weight: 700;
+}
+.acc-toggle.is-off { opacity: 0.4; }
+.editor-toolbar .acc-toggle button:disabled { cursor: not-allowed; }
+
+.editor-toolbar .key-reset {
+  background: transparent;
+  border: 1px solid #555;
+  color: #cfcfcf;
+  font-size: 0.8rem;
+  padding: 0.35rem 0.6rem;
+}
+.editor-toolbar .key-reset:hover:not(:disabled) { background: #333; filter: none; }
+.editor-toolbar .key-reset:disabled { opacity: 0; pointer-events: none; }
+
+/* Segmented Chords | Numbers toggle */
+.seg-toggle {
+  display: inline-flex;
+  border: 1px solid #555;
+  border-radius: 7px;
+  overflow: hidden;
+}
+.editor-toolbar .seg-toggle button {
+  background: #1a1a1a;
+  border: none;
+  border-radius: 0;
+  color: #b9b9b9;
+  font-size: 0.85rem;
+  padding: 0.42rem 0.9rem;
+}
+.editor-toolbar .seg-toggle button + button { border-left: 1px solid #3a3a3a; }
+.editor-toolbar .seg-toggle button:hover { background: #2f2f2f; filter: none; }
+.editor-toolbar .seg-toggle button.active {
+  background: #2a6cdc;
+  color: #fff;
+  font-weight: 600;
+}
+
+.editor-body {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  padding: 1rem;
+  overflow: hidden;
+  flex: 1;
+  background: #f4f5f7;
+}
+.editor-pane {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+  min-width: 0;
+  flex: 1 1 0;
+}
+/* Editor (left) pane width is driven by inline style; don't let flex
+   override it. The preview pane stays flex:1 and fills the remaining space
+   (or the whole body when the editor is hidden). */
+.editor-pane.is-editor { flex: 0 0 auto; }
+
+.editor-resizer {
+  flex: 0 0 14px;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  touch-action: none;
+}
+.editor-resizer-grip {
+  width: 4px;
+  height: 44px;
+  border-radius: 2px;
+  background: #c4c8d0;
+  transition: background 0.15s;
+}
+.editor-resizer:hover .editor-resizer-grip,
+.editor-resizer:active .editor-resizer-grip {
+  background: #2a6cdc;
+}
+.editor-pane h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.95rem;
+  color: #444;
+}
+.editor-pane .hint {
+  font-size: 0.8rem;
+  color: #666;
+  margin: 0 0 0.5rem;
+  line-height: 1.4;
+}
+.editor-pane .hint code {
+  background: #e7e9ef;
+  padding: 0 0.25rem;
+  border-radius: 3px;
+  font-size: 0.85em;
+}
+.editor-pane textarea {
+  flex: 1;
+  resize: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  padding: 0.75rem;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  background: #fff;
+  line-height: 1.45;
+}
+.editor-pane > .sheet-render { overflow: auto; }
+
+/* Distraction-free present mode: only the sheet, full viewport. */
+.present-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: #fff;
+  overflow: auto;
+  padding: 2.25rem 2.5rem 3rem;
+}
+.present-overlay .sheet-render {
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  min-height: 0;
+}
+.present-exit {
+  position: fixed;
+  top: 0.9rem;
+  right: 1.1rem;
+  z-index: 1001;
+  background: rgba(0, 0, 0, 0.05);
+  color: #555;
+  border: 1px solid #dcdcdc;
+  padding: 0.4rem 0.85rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  opacity: 0.45;
+  transition: opacity 0.15s;
+}
+.present-exit:hover,
+.present-exit:focus-visible { opacity: 1; }

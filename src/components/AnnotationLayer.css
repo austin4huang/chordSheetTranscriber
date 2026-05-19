@@ -1,0 +1,138 @@
+/* Drawing surface, anchored to the sheet's scroll content. */
+.anno-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  touch-action: none;
+}
+
+/* Floating toolbar — stays pinned top-right while the sheet scrolls. */
+.anno-toolbar {
+  position: sticky;
+  position: -webkit-sticky;
+  top: 0.4rem;
+  z-index: 5;
+  width: fit-content;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.4rem;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid #dcdcdc;
+  border-radius: 8px;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.14);
+}
+.anno-toolbar .anno-btn,
+.anno-toolbar .anno-swatch {
+  width: 1.7rem;
+  height: 1.7rem;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  background: #fff;
+  color: #444;
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.anno-toolbar .anno-btn:hover:not(:disabled) { background: #f0f0f0; }
+.anno-toolbar .anno-btn:disabled { opacity: 0.4; cursor: default; }
+.anno-toolbar .anno-btn.active {
+  background: #2a6cdc;
+  border-color: #2a6cdc;
+  color: #fff;
+}
+.anno-fontsize {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+.anno-fontsize span {
+  min-width: 2ch;
+  text-align: center;
+  font-size: 0.8rem;
+  color: #444;
+  font-variant-numeric: tabular-nums;
+}
+.anno-fontsize .anno-btn { width: 1.4rem; }
+
+/* Free-positioned text annotations. */
+.anno-textbox {
+  position: absolute;
+  z-index: 4;
+  box-sizing: border-box;
+}
+.anno-textbox.is-move,
+.anno-textbox.is-move .anno-text { cursor: move; }
+.anno-text {
+  display: block;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0.1rem 0.2rem;
+  /* Strip the native textarea chrome (its opaque fill / inset border). */
+  -webkit-appearance: none;
+  appearance: none;
+  border: 1px dashed transparent;
+  background-color: transparent;
+  box-shadow: none;
+  font-family: system-ui, sans-serif;
+  line-height: 1.25;
+  box-sizing: border-box;
+  overflow: hidden;
+  white-space: pre;
+  resize: none;
+}
+/* Hidden twin used only to measure the text's true extent. */
+.anno-mirror {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  visibility: hidden;
+  pointer-events: none;
+}
+.anno-textbox:hover .anno-text:not(.anno-mirror) { border-color: #b9c3d6; }
+.anno-text:focus {
+  outline: none;
+  border-color: #2a6cdc;
+  background: transparent;
+}
+/* Explicit drag-to-resize handle (bottom-right corner). */
+.anno-resize {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  background:
+    linear-gradient(135deg, transparent 50%, #2a6cdc 50%);
+  border-radius: 0 0 3px 0;
+  opacity: 0;
+  transition: opacity 0.12s;
+  touch-action: none;
+}
+.anno-textbox:hover .anno-resize,
+.anno-textbox:focus-within .anno-resize { opacity: 1; }
+
+.anno-grip {
+  cursor: grab;
+  color: #8a8a8a;
+  touch-action: none;
+}
+.anno-grip:active { cursor: grabbing; }
+.anno-collapse { color: #555; }
+.anno-toolbar.is-collapsed { gap: 0.25rem; padding: 0.25rem 0.3rem; }
+
+.anno-toolbar .anno-swatch { border-radius: 50%; }
+.anno-toolbar .anno-swatch.active {
+  outline: 2px solid #2a2a2a;
+  outline-offset: 1px;
+}

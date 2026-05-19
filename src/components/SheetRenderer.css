@@ -1,0 +1,122 @@
+.sheet-render {
+  position: relative;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: #1a1a1a;
+  background: #fff;
+  padding: 1.75rem 2rem;
+  border-radius: 8px;
+  border: 1px solid #e2e2e2;
+  min-height: 400px;
+}
+.sr-header {
+  border-bottom: 2px solid #eee;
+  padding-bottom: 0.85rem;
+  margin-bottom: 1.25rem;
+  font-family: system-ui, sans-serif;
+}
+.sr-header h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.6rem;
+  letter-spacing: -0.01em;
+}
+.sr-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  color: #6b7280;
+  font-size: 0.85rem;
+}
+.sr-meta span { white-space: nowrap; }
+
+.sr-body {
+  line-height: 1.5;
+  font-size: 14px;
+  /* Flow into multiple columns when the pane is wide enough (drops back to
+     one column when narrow), so long sheets need less vertical scrolling. */
+  column-width: 26rem;
+  column-gap: 2.5rem;
+  column-rule: 1px solid #eee;
+  column-fill: balance;
+}
+/* Keep a chord/lyric line, chord row, or section label from being split
+   across a column break. */
+.sr-line,
+.sr-chordonly,
+.sr-blank,
+.sr-section {
+  break-inside: avoid;
+  -webkit-column-break-inside: avoid;
+}
+.sr-section {
+  font-weight: 700;
+  margin: 1.5rem 0 0.4rem;
+  font-family: system-ui, sans-serif;
+  color: #2a4a8b;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.8rem;
+  /* Don't strand a section header at the foot of a column. */
+  break-after: avoid;
+  -webkit-column-break-after: avoid;
+}
+/* A section header should also start a fresh column cleanly when it lands
+   near a break rather than detaching from its lines. */
+.sr-body > .sr-section { break-before: auto; }
+/* First section shouldn't push down from the header. */
+.sr-body > .sr-section:first-child { margin-top: 0; }
+.sr-blank { height: 0.7rem; }
+.sr-chordonly {
+  font-weight: 600;
+  color: #b6391e;
+  white-space: pre;
+  margin: 0.15rem 0 0.35rem;
+  overflow-x: auto;
+}
+.sr-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  margin: 0.1rem 0 0.6rem;
+}
+.sr-pair {
+  display: inline-flex;
+  flex-direction: column;
+  white-space: pre;
+}
+.sr-chord {
+  color: #b6391e;
+  font-weight: 700;
+  min-height: 1.25em;
+  font-size: 0.92em;
+  padding-right: 0.1em;
+}
+.sr-lyric { color: #1a1a1a; }
+
+/* Accidentals are thin/small in most fonts — enlarge and embolden so a
+   flat/sharp is unmistakable next to the chord letter. */
+.sr-acc {
+  font-size: 0.95em;
+  font-weight: 900;
+  line-height: 1;
+  padding: 0 0.02em;
+  /* Sit above the chord letter, like a superscript accidental. */
+  vertical-align: 0.42em;
+  /* font-weight maxes at 900, so add an outline to make the glyph heavier
+     and crisper. */
+  -webkit-text-stroke: 0.5px currentColor;
+  text-shadow: 0 0 0.5px currentColor;
+}
+
+/* Clean output when printing a sheet. */
+@media print {
+  .sheet-render {
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    min-height: 0;
+  }
+  .sr-section { color: #000; }
+  .sr-chord, .sr-chordonly { color: #000; }
+  /* Single column for predictable pagination on paper. */
+  .sr-body { column-width: auto; column-rule: none; }
+}
