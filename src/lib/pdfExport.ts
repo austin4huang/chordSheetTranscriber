@@ -1,0 +1,296 @@
+// Visual PDF export for songs and sets. The PDF is a clean, human-readable
+// chord sheet (chords above lyrics). The exact source data is also embedded
+// in the PDF's /Keywords metadata so importing one of *our* PDFs round-trips
+// losslessly (annotations, text notes, set order included). Foreign PDFs
+// fall back to the heuristic parser in pdfParser.ts.
+
+import { jsPDF } from "jspdf";
+import { toPng } from "html-to-image";
+import type { ChordSheet } from "./types";
+
+const MARKER = "CHORDSHEETv1:";
+
+export type EmbeddedPayload =
+  | { v: 1; kind: "song"; sheet: ChordSheet }
+  | { v: 1; kind: "set"; name: string; sheets: ChordSheet[] };
+
+function encodePayload(obj: EmbeddedPayload): string {
+  return MARKER + btoa(unescape(encodeURIComponent(JSON.stringify(obj))));
+}
+
+/** Decode an embedded payload from a PDF /Keywords string, or null if it
+ *  isn't one of ours / is corrupt. */
+export function decodePayload(keywords: string | null | undefined): EmbeddedPayload | null {
+  if (!keywords || !keywords.startsWith(MARKER)) return null;
+  try {
+    const json = decodeURIComponent(escape(atob(keywords.slice(MARKER.length))));
+    const obj = JSON.parse(json) as EmbeddedPayload;
+    if (obj && obj.v === 1 && (obj.kind === "song" || obj.kind === "set")) {
+      return obj;
+    }
+  } catch {
+    /* fall through */
+  }
+  return null;
+}
+
+// --- Layout -----------------------------------------------------------------
+
+const PAGE_H = 792; // letter, pt
+const MARGIN = 54;
+const BODY_FONT = 9.5;
+const LINE_H = 12; // lyric row
+const CHORD_H = 11; // chord row above a lyric
+const SECTION_GAP = 10;
+
+/** Split a ChordPro line into an aligned chord row and lyric row. */
+function chordProToRows(line: string): { chords: string; lyric: string } {
+  const re = /\[([^\]]+)\]/g;
+  let lyric = "";
+  let chords = "";
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(line)) !== null) {
+    lyric += line.slice(last, m.index);
+    while (chords.length < lyric.length) chords += " ";
+    chords += m[1] + " ";
+    last = m.index + m[0].length;
+  }
+  lyric += line.slice(last);
+  return { chords: chords.replace(/\s+$/, ""), lyric };
+}
+
+function newDoc(): jsPDF {
+  return new jsPDF({ unit: "pt", format: "letter" });
+}
+
+/** Render one song starting at `y`; returns the y after it. Adds pages as
+ *  needed. `startPage` forces a page break before the song (used for sets). */
+function drawSheet(doc: jsPDF, sheet: ChordSheet, y: number): number {
+  const bottom = PAGE_H - MARGIN;
+  const ensure = (need: number) => {
+    if (y + need > bottom) {
+      doc.addPage();
+      y = MARGIN;
+    }
+  };
+
+  // Header
+  ensure(40);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(17);
+  doc.text(sheet.title || "Untitled", MARGIN, y);
+  y += 20;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
+  doc.setTextColor(110);
+  const meta = [
+    `Key ${sheet.key}${sheet.mode === "minor" ? "m" : ""}`,
+    sheet.artist ? sheet.artist : null,
+    sheet.tempo ? `${sheet.tempo} bpm` : null,
+    sheet.time ? sheet.time : null,
+  ]
+    .filter(Boolean)
+    .join("   ·   ");
+  if (meta) {
+    doc.text(meta, MARGIN, y);
+    y += 16;
+  } else {
+    y += 6;
+  }
+  doc.setTextColor(20);
+
+  for (const ln of sheet.lines) {
+    if (ln.kind === "blank") {
+      y += LINE_H * 0.6;
+      continue;
+    }
+    if (ln.kind === "section") {
+      ensure(SECTION_GAP + CHORD_H);
+      y += SECTION_GAP;
+      doc.setFont("courier", "bold");
+      doc.setFontSize(BODY_FONT + 1);
+      doc.setTextColor(40, 90, 200);
+      doc.text(ln.text.toUpperCase(), MARGIN, y);
+      doc.setTextColor(20);
+      y += LINE_H + 2;
+      continue;
+    }
+    if (ln.kind === "comment") {
+      ensure(LINE_H);
+      doc.setFont("courier", "italic");
+      doc.setFontSize(BODY_FONT);
+      doc.setTextColor(130);
+      doc.text(ln.text.replace(/^#\s?/, ""), MARGIN, y);
+      doc.setTextColor(20);
+      y += LINE_H;
+      continue;
+    }
+    if (ln.kind === "chord-only") {
+      ensure(CHORD_H);
+      doc.setFont("courier", "bold");
+      doc.setFontSize(BODY_FONT);
+      doc.setTextColor(40, 90, 200);
+      doc.text(ln.text, MARGIN, y);
+      doc.setTextColor(20);
+      y += CHORD_H;
+      continue;
+    }
+    // chordpro
+    const { chords, lyric } = chordProToRows(ln.text);
+    if (chords) {
+      ensure(CHORD_H + LINE_H);
+      doc.setFont("courier", "bold");
+      doc.setFontSize(BODY_FONT);
+      doc.setTextColor(40, 90, 200);
+      doc.text(chords, MARGIN, y);
+      y += CHORD_H;
+      doc.setTextColor(20);
+    } else {
+      ensure(LINE_H);
+    }
+    doc.setFont("courier", "normal");
+    doc.setFontSize(BODY_FONT);
+    doc.text(lyric || " ", MARGIN, y);
+    y += LINE_H;
+  }
+  return y;
+}
+
+function triggerDownload(doc: jsPDF, filename: string) {
+  const blob = doc.output("blob");
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function safeName(s: string): string {
+  return (s.trim() || "Untitled").replace(/[^\w.\- ]+/g, "_").slice(0, 80);
+}
+
+export function exportSongPdf(sheet: ChordSheet) {
+  const doc = newDoc();
+  drawSheet(doc, sheet, MARGIN);
+  doc.setProperties({
+    title: sheet.title,
+    subject: "Chord sheet",
+    keywords: encodePayload({ v: 1, kind: "song", sheet }),
+  });
+  triggerDownload(doc, `${safeName(sheet.title)}.pdf`);
+}
+
+export function exportSetPdf(name: string, sheets: ChordSheet[]) {
+  const doc = newDoc();
+  let first = true;
+  for (const sheet of sheets) {
+    if (!first) doc.addPage();
+    first = false;
+    drawSheet(doc, sheet, MARGIN);
+  }
+  if (sheets.length === 0) {
+    doc.setFontSize(12);
+    doc.text(`Set "${name}" (empty)`, MARGIN, MARGIN + 20);
+  }
+  doc.setProperties({
+    title: name,
+    subject: "Chord-sheet set",
+    keywords: encodePayload({ v: 1, kind: "set", name, sheets }),
+  });
+  triggerDownload(doc, `${safeName(name)}.pdf`);
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+/**
+ * Rasterize the live rendered sheet node (so it captures exactly what the
+ * editor shows: chords vs numbers, the current display key, freehand strokes
+ * and text boxes) into a paginated PDF. The canonical sheet data is still
+ * embedded for lossless reimport.
+ */
+export async function exportRenderedPdf(
+  node: HTMLElement,
+  sheet: ChordSheet,
+): Promise<void> {
+  // The sheet box is its own scroll container, so by default html-to-image
+  // would only grab the visible portion. Temporarily expand it to its full
+  // content height so the whole song is captured. Doing this on the live
+  // node lets the AnnotationLayer's ResizeObserver re-fit the stroke overlay
+  // to the full height, keeping annotations aligned.
+  const s = node.style;
+  const saved = {
+    overflow: s.overflow,
+    height: s.height,
+    maxHeight: s.maxHeight,
+    width: s.width,
+  };
+  // Pin the current width so the multi-column layout (column count) doesn't
+  // change while we let the height grow.
+  s.width = `${node.clientWidth}px`;
+  s.overflow = "visible";
+  s.maxHeight = "none";
+  s.height = "auto";
+  // Let layout settle and the ResizeObserver-driven SVG overlay resize.
+  await new Promise<void>((r) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => r())),
+  );
+  await new Promise<void>((r) => setTimeout(r, 60));
+
+  let dataUrl: string;
+  try {
+    dataUrl = await toPng(node, {
+      pixelRatio: 2,
+      backgroundColor: "#ffffff",
+      width: node.scrollWidth,
+      height: node.scrollHeight,
+      // The annotation toolbar is editing chrome — never include it.
+      filter: (n) =>
+        !(n instanceof Element && n.classList?.contains("anno-toolbar")),
+    });
+  } finally {
+    s.overflow = saved.overflow;
+    s.height = saved.height;
+    s.maxHeight = saved.maxHeight;
+    s.width = saved.width;
+  }
+  const img = await loadImage(dataUrl);
+
+  const doc = newDoc();
+  const margin = 24;
+  const contentW = 612 - margin * 2;
+  const contentH = PAGE_H - margin * 2;
+  const scale = contentW / img.naturalWidth; // pt per source px
+  const fullH = img.naturalHeight * scale;
+  const pages = Math.max(1, Math.ceil(fullH / contentH));
+
+  for (let i = 0; i < pages; i++) {
+    if (i > 0) doc.addPage();
+    // Shift the (full-height) image up each page; jsPDF clips to the page.
+    doc.addImage(
+      dataUrl,
+      "PNG",
+      margin,
+      margin - i * contentH,
+      contentW,
+      fullH,
+    );
+  }
+
+  doc.setProperties({
+    title: sheet.title,
+    subject: "Chord sheet",
+    keywords: encodePayload({ v: 1, kind: "song", sheet }),
+  });
+  triggerDownload(doc, `${safeName(sheet.title)}.pdf`);
+}

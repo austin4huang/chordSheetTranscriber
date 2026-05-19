@@ -11,6 +11,8 @@ import type { ChordSheet, Stroke, TextNote } from "../lib/types";
 import { linesToText, textToSheet, saveSheet } from "../lib/storage";
 import { noteToPitchClass } from "../lib/nashville";
 import { SheetRenderer } from "./SheetRenderer";
+import { exportRenderedPdf } from "../lib/pdfExport";
+import { DownloadIcon } from "./icons";
 import "./SheetEditor.css";
 
 // Chromatic note names by pitch class, in both spellings. Enharmonic keys
@@ -119,6 +121,8 @@ export function SheetEditor({
   // the left pane).
   const setSplit = onSplitChange;
   const bodyRef = useRef<HTMLDivElement>(null);
+  const renderRef = useRef<HTMLDivElement>(null);
+  const [exporting, setExporting] = useState(false);
   const dragging = useRef(false);
 
   const onResizeDown = useCallback((e: React.PointerEvent) => {
@@ -161,6 +165,22 @@ export function SheetEditor({
     saveTimer.current = window.setTimeout(() => setJustSaved(false), 1800);
     onSaved(toSave);
   };
+  const onExport = async () => {
+    if (!renderRef.current || exporting) return;
+    setExporting(true);
+    try {
+      // Capture the live preview so it matches the editor exactly (chords/
+      // numbers, current key, strokes + text boxes). Embed current data so
+      // reimport restores annotations too.
+      await exportRenderedPdf(renderRef.current, { ...sheet, annotations, texts });
+    } catch (e) {
+      console.error("PDF export failed", e);
+      alert("Sorry — couldn't generate the PDF.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   // Clear the "Saved" flash timer on unmount.
   useEffect(
     () => () => {
@@ -253,6 +273,15 @@ export function SheetEditor({
         <div className="tb-divider" />
         <div className="tb-group">
           <button
+            className="tb-icon-btn"
+            onClick={onExport}
+            disabled={exporting}
+            aria-label="Download PDF"
+            title="Download as PDF — matches this view (chords/numbers, current key, annotations)"
+          >
+            {exporting ? "…" : <><DownloadIcon /><span className="btn-pdf-label">PDF</span></>}
+          </button>
+          <button
             onClick={onSave}
             className={`primary save-btn${justSaved ? " is-saved" : ""}`}
             disabled={!dirty && !justSaved}
@@ -267,28 +296,6 @@ export function SheetEditor({
             title="Present full screen (Esc to exit)"
           >
             ⛶
-          </button>
-        </div>
-        <div
-          className="seg-toggle"
-          role="group"
-          aria-label="Notation display"
-        >
-          <button
-            type="button"
-            className={!numberMode ? "active" : ""}
-            aria-pressed={!numberMode}
-            onClick={() => setNumberMode(false)}
-          >
-            Chords
-          </button>
-          <button
-            type="button"
-            className={numberMode ? "active" : ""}
-            aria-pressed={numberMode}
-            onClick={() => setNumberMode(true)}
-          >
-            Numbers
           </button>
         </div>
         </div>
@@ -368,6 +375,28 @@ export function SheetEditor({
             ↺ {prettyKey(sheet.key)}
           </button>
         </div>
+        <div
+          className="seg-toggle"
+          role="group"
+          aria-label="Notation display"
+        >
+          <button
+            type="button"
+            className={!numberMode ? "active" : ""}
+            aria-pressed={!numberMode}
+            onClick={() => setNumberMode(false)}
+          >
+            Chords
+          </button>
+          <button
+            type="button"
+            className={numberMode ? "active" : ""}
+            aria-pressed={numberMode}
+            onClick={() => setNumberMode(true)}
+          >
+            Numbers
+          </button>
+        </div>
         </div>
       </div>
       <div className="editor-body" ref={bodyRef}>
@@ -412,6 +441,7 @@ export function SheetEditor({
             onAnnotationsChange={setAnnotations}
             texts={texts}
             onTextsChange={setTexts}
+            rootRef={renderRef}
           />
         </div>
       </div>

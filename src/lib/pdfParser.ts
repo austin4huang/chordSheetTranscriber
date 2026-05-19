@@ -6,6 +6,7 @@ import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import type { ChordSheet, SheetLine } from "./types";
 import { parseChord } from "./nashville";
 import { recoverLigatures, recoverLigaturesAligned } from "./ligatures";
+import { decodePayload, type EmbeddedPayload } from "./pdfExport";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -442,6 +443,22 @@ function emitRows(rows: Item[][], lines: SheetLine[]): void {
       continue;
     }
     i++;
+  }
+}
+
+/** If the PDF was exported by this app, recover the exact embedded data
+ *  (lossless round-trip). Returns null for foreign PDFs. */
+export async function extractEmbeddedPayload(
+  file: File,
+): Promise<EmbeddedPayload | null> {
+  try {
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    const meta = await pdf.getMetadata();
+    const kw = (meta.info as { Keywords?: string } | undefined)?.Keywords;
+    return decodePayload(kw);
+  } catch {
+    return null;
   }
 }
 

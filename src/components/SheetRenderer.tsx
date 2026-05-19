@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 import type { ChordSheet, SheetLine, Stroke, TextNote } from "../lib/types";
 import { chordToNumber, transposeChord } from "../lib/nashville";
 import { AnnotationLayer } from "./AnnotationLayer";
@@ -12,6 +12,8 @@ interface Props {
   onAnnotationsChange?: (next: Stroke[]) => void;
   texts?: TextNote[];
   onTextsChange?: (next: TextNote[]) => void;
+  /** Attached to the .sheet-render box so it can be rasterized for export. */
+  rootRef?: Ref<HTMLDivElement>;
 }
 
 interface Token {
@@ -125,6 +127,7 @@ export function SheetRenderer({
   onAnnotationsChange,
   texts,
   onTextsChange,
+  rootRef,
 }: Props) {
   const ctx: XformCtx = {
     numberMode,
@@ -133,7 +136,7 @@ export function SheetRenderer({
     displayKey,
   };
   return (
-    <div className="sheet-render">
+    <div className="sheet-render" ref={rootRef}>
       {onAnnotationsChange && onTextsChange && (
         <AnnotationLayer
           annotations={annotations ?? []}
@@ -147,7 +150,10 @@ export function SheetRenderer({
         <div className="sr-meta">
           {sheet.artist && <span>{sheet.artist}</span>}
           <span>
-            Key: {numberMode ? "Numbers" : sheet.key + (sheet.mode === "minor" ? "m" : "")}
+            Key:{" "}
+            {numberMode
+              ? "Numbers"
+              : prettyAccidentals(displayKey) + (sheet.mode === "minor" ? "m" : "")}
           </span>
           {sheet.tempo && <span>Tempo: {sheet.tempo}</span>}
           {sheet.time && <span>Time: {sheet.time}</span>}

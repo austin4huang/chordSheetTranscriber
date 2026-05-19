@@ -5,7 +5,10 @@ import {
   listSheets, deleteSheet, saveSheet, emptySheetWithDefaults,
   listSets, saveSet, deleteSet,
 } from "../lib/storage";
-import { parsePdfToSheet } from "../lib/pdfParser";
+import { parsePdfToSheet, extractEmbeddedPayload } from "../lib/pdfParser";
+import { exportSongPdf, exportSetPdf } from "../lib/pdfExport";
+import { importChords, toChordSheet } from "../lib/chordImport";
+import { DownloadIcon } from "./icons";
 import "./SheetList.css";
 
 interface Props {
@@ -21,6 +24,8 @@ export function SheetList({ onOpen }: Props) {
   const [newSetName, setNewSetName] = useState("");
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  const [urlOpen, setUrlOpen] = useState(false);
+  const [urlText, setUrlText] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   const refresh = () => {
@@ -38,6 +43,41 @@ export function SheetList({ onOpen }: Props) {
     setImporting(true);
     setImportError(null);
     try {
+      // Lossless path: a PDF this app exported carries its source data.
+      const payload = await extractEmbeddedPayload(file);
+      if (payload?.kind === "song") {
+        const sheet: ChordSheet = {
+          ...payload.sheet,
+          id: crypto.randomUUID(),
+          updatedAt: Date.now(),
+        };
+        saveSheet(sheet);
+        onOpen(sheet.id);
+        return;
+      }
+      if (payload?.kind === "set") {
+        const ids: string[] = [];
+        for (const s of payload.sheets) {
+          const sheet: ChordSheet = {
+            ...s,
+            id: crypto.randomUUID(),
+            updatedAt: Date.now(),
+          };
+          saveSheet(sheet);
+          ids.push(sheet.id);
+        }
+        const newSet: SongSet = {
+          id: crypto.randomUUID(),
+          name: payload.name || file.name.replace(/\.pdf$/i, ""),
+          sheetIds: ids,
+          updatedAt: Date.now(),
+        };
+        saveSet(newSet);
+        refresh();
+        setExpanded(newSet.id);
+        return;
+      }
+
       const partial = await parsePdfToSheet(file);
       const lines = partial.lines || [];
       const hasContent = lines.some((l) => l.kind !== "blank" && l.text.trim());
@@ -62,6 +102,25 @@ export function SheetList({ onOpen }: Props) {
       console.error(e);
       setImportError(
         `Couldn't read "${file.name}". It may be corrupted or not a valid PDF.`,
+      );
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const onImportUrl = async () => {
+    setImporting(true);
+    setImportError(null);
+    try {
+      const imported = await importChords(urlText);
+      const sheet = toChordSheet(imported);
+      saveSheet(sheet);
+      setUrlText("");
+      setUrlOpen(false);
+      onOpen(sheet.id);
+    } catch (e) {
+      setImportError(
+        e instanceof Error ? e.message : "Couldn't import from that input.",
       );
     } finally {
       setImporting(false);
@@ -143,6 +202,15 @@ export function SheetList({ onOpen }: Props) {
           <button onClick={() => fileRef.current?.click()} disabled={importing}>
             {importing ? "Importing…" : "Import PDF"}
           </button>
+          <button
+            onClick={() => {
+              setImportError(null);
+              setUrlOpen((o) => !o);
+            }}
+            disabled={importing}
+          >
+            Import from URL
+          </button>
           <input
             ref={fileRef}
             type="file"
@@ -156,6 +224,50 @@ export function SheetList({ onOpen }: Props) {
           />
         </div>
       </header>
+
+      {urlOpen && (
+        <form
+          className="url-import"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!importing && urlText.trim()) onImportUrl();
+          }}
+        >
+          <textarea
+            autoFocus
+            rows={4}
+            placeholder={
+              "Paste an Ultimate-Guitar URL — or, if fetching is blocked, the " +
+              "page source (View → Page Source) or the raw tab text."
+            }
+            value={urlText}
+            onChange={(e) => setUrlText(e.target.value)}
+          />
+          <div className="url-import-actions">
+            <span className="url-import-hint">
+              Crowd-sourced &amp; copyrighted — for personal/licensed use; verify accuracy.
+            </span>
+            <span className="spacer" />
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={() => {
+                setUrlOpen(false);
+                setUrlText("");
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="primary"
+              disabled={importing || !urlText.trim()}
+            >
+              {importing ? "Importing…" : "Import"}
+            </button>
+          </div>
+        </form>
+      )}
 
       <div className="search-bar">
         <span className="search-icon" aria-hidden="true">⌕</span>
@@ -254,6 +366,22 @@ export function SheetList({ onOpen }: Props) {
                         ▶ Open set
                       </button>
                     )}
+                    {set.sheetIds.length > 0 && (
+                      <button
+                        className="ghost-btn"
+                        title="Download this set as a PDF (re-importable)"
+                        onClick={() =>
+                          exportSetPdf(
+                            set.name,
+                            set.sheetIds
+                              .map((id) => sheets.find((s) => s.id === id))
+                              .filter((s): s is ChordSheet => !!s),
+                          )
+                        }
+                      >
+                        <DownloadIcon /><span className="btn-pdf-label">PDF</span>
+                      </button>
+                    )}
                     <button className="set-del" onClick={() => removeSet(set.id)}>
                       Delete
                     </button>
@@ -349,6 +477,13 @@ export function SheetList({ onOpen }: Props) {
                     ))}
                   </select>
                 )}
+                <button
+                  className="ghost-btn sheet-export"
+                  title="Download as PDF (re-importable)"
+                  onClick={() => exportSongPdf(s)}
+                >
+                  <DownloadIcon /><span className="btn-pdf-label">PDF</span>
+                </button>
                 <button className="delete" onClick={() => onDelete(s.id)}>Delete</button>
               </li>
             ))}
