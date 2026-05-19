@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { SheetList } from "./components/SheetList";
 import { SheetEditor } from "./components/SheetEditor";
 import { getSheet, getSet } from "./lib/storage";
+import { initPersistence } from "./lib/persist";
 import "./App.css";
 
 type View =
@@ -16,6 +17,12 @@ export default function App() {
   const [editorHidden, setEditorHidden] = useState(false);
   const [presenting, setPresenting] = useState(false);
   const [split, setSplit] = useState(50);
+
+  // Request persistent storage and adopt a linked device folder (if any)
+  // once per app load.
+  useEffect(() => {
+    void initPersistence();
+  }, []);
 
   if (view.kind === "list") {
     return (

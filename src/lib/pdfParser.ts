@@ -245,6 +245,14 @@ function classifyRow(row: Item[]): "chord" | "chord-only-line" | "lyric" | "sect
   const tokens = row.map((i) => i.text.trim()).filter(Boolean);
   if (tokens.length === 0) return "other";
   const all = tokens.join(" ");
+  // Orphan chord-extension superscripts that failed to reattach to their
+  // base chord (common in some WorshipTogether exports) land on their own
+  // rows: lone numbers/parens/quality suffixes with no note letter, e.g.
+  // "2", "7", "(4)", "sus", "sus  sus  sus", "2     (4)". A real chord
+  // always leads with a note A–G, so anything that's *only* these fragments
+  // (and never a chord/bar-line/lyric) is dropped rather than emitted.
+  const ORPHAN_EXT = /^\(?(?:sus\d?|add\d{1,2}|maj\d?|min|dim|aug|m|\d{1,2})\)?$/i;
+  if (tokens.every((t) => ORPHAN_EXT.test(t))) return "other";
   // Section header: usually all caps single short label
   if (
     tokens.length <= 3 &&
@@ -276,7 +284,13 @@ function classifyRow(row: Item[]): "chord" | "chord-only-line" | "lyric" | "sect
   // Terms of Use. All rights reserved. www.ccli.com").
   if (
     /(Key\s*-|Tempo\s*-|Time\s*-|CCLI|©)/.test(all) ||
-    /(SongSelect|ccli\.com|All rights reserved|Terms of Use|CCLI License)/i.test(all)
+    /(SongSelect|ccli\.com|All rights reserved|Terms of Use|CCLI License)/i.test(all) ||
+    // WorshipTogether/worship publishing footer boilerplate that gets
+    // column-split into the body, e.g.
+    // "Ltd | Vamos Publishing | worshiptogether.com songs | Martin…".
+    /(worshiptogether|Publishing|Music Services|Capitol\s*CMG|sixsteps|Be Essential|Bethel Music|Hillsong|Integrity|Essential Music|Used by permission|admin\.|\bLtd\b)/i.test(
+      all,
+    )
   ) {
     return "header";
   }
@@ -462,8 +476,49 @@ export async function extractEmbeddedPayload(
   }
 }
 
-export async function parsePdfToSheet(file: File): Promise<Partial<ChordSheet>> {
-  const pages = await extractItems(file);
+// SongSelect repeats the title on continuation/footer pages with a page
+// suffix ("This Is Amazing Grace - 2"). Strip it so a song's later pages
+// don't look like a different song.
+function stripPageSuffix(s: string): string {
+  return s.replace(/\s*[-–]\s*\d{1,2}\s*$/, "");
+}
+function normTitle(s: string | null): string {
+  return stripPageSuffix((s ?? "").toLowerCase().replace(/\s+/g, " ").trim()).trim();
+}
+
+const SECTION_KEYWORD_RE =
+  /\b(INTRO|VERSE|CHORUS|PRE[- ]?CHORUS|BRIDGE|INSTRUMENTAL|INTERLUDE|TURNAROUND|TAG|OUTRO|ENDING|REFRAIN|VAMP)\b/i;
+
+// A song's first page in a SongSelect-style bundle carries metadata: a
+// "Key -"/"Tempo -" header and/or a CCLI/SongSelect footer.
+function pageHasMasthead(pageItems: Item[]): boolean {
+  if (detectKey(pageItems)) return true;
+  return pageItems.some((it) =>
+    /(CCLI|SongSelect|ccli\.com)/i.test(it.text),
+  );
+}
+
+// Real song content (not just a repeated title + CCLI/copyright footer).
+// SongSelect's trailing copyright page has only a handful of boilerplate
+// items, so it must not be allowed to start a new song.
+function pageHasSongContent(pageItems: Item[]): boolean {
+  if (pageItems.some((it) => SECTION_KEYWORD_RE.test(it.text))) return true;
+  const meaty = pageItems.filter(
+    (it) =>
+      it.text.trim().length > 0 &&
+      !/(CCLI|SongSelect|ccli\.com|©|All rights reserved|Key\s*-|Tempo\s*-|Time\s*-)/i.test(
+        it.text,
+      ),
+  );
+  return meaty.length > 8;
+}
+
+// CCLI/publishing footer or a repeated "Title - N" page header that leaked
+// into the body (used to trim trailing junk from continuation pages).
+const FOOTER_LINE_RE =
+  /(CCLI|SongSelect|ccli\.com|©|All rights reserved|Terms of Use|worshiptogether|Publishing|Music Services|Capitol\s*CMG|sixsteps|Be Essential|Bethel Music|Hillsong|Integrity|Essential Music|Used by permission|admin\.|\bLtd\b)/i;
+
+function pagesToSheet(pages: Item[][]): Partial<ChordSheet> {
   const allItems = pages.flat();
   const lines: SheetLine[] = [];
 
@@ -488,13 +543,24 @@ export async function parsePdfToSheet(file: File): Promise<Partial<ChordSheet>> 
   const firstSection = lines.findIndex((l) => l.kind === "section");
   if (firstSection > 0) lines.splice(0, firstSection);
 
-  // Trim trailing blank lines left behind once the footer is dropped.
-  while (lines.length > 0 && lines[lines.length - 1].kind === "blank") {
-    lines.pop();
-  }
-
   const keyInfo = detectKey(allItems);
   const title = detectTitle(allItems);
+  const baseTitle = normTitle(title);
+
+  // Trim trailing junk: blank lines, plus the CCLI/copyright footer and the
+  // repeated "Title - N" page header that SongSelect puts on continuation
+  // pages (these get appended after the real song once pages are merged).
+  while (lines.length > 0) {
+    const last = lines[lines.length - 1];
+    const text = last.text.trim();
+    const isFooter =
+      last.kind === "blank" ||
+      (last.kind !== "section" &&
+        (FOOTER_LINE_RE.test(text) ||
+          (!!baseTitle && normTitle(text) === baseTitle)));
+    if (!isFooter) break;
+    lines.pop();
+  }
 
   return {
     title: title || "Untitled",
@@ -502,4 +568,44 @@ export async function parsePdfToSheet(file: File): Promise<Partial<ChordSheet>> 
     mode: keyInfo?.mode || "major",
     lines,
   };
+}
+
+export async function parsePdfToSheet(file: File): Promise<Partial<ChordSheet>> {
+  const pages = await extractItems(file);
+  return pagesToSheet(pages);
+}
+
+/**
+ * Split a multi-song PDF (e.g. a SongSelect set/bundle) into one sheet per
+ * song. Pages are grouped by their masthead title: a page only starts a new
+ * song when its top title differs AND it carries song metadata (Key-/CCLI),
+ * so multi-page songs and non-SongSelect single songs stay intact. Returns
+ * one entry when only a single song is detected.
+ */
+export async function parsePdfToSheets(
+  file: File,
+): Promise<Partial<ChordSheet>[]> {
+  const pages = await extractItems(file);
+  if (pages.length === 0) return [pagesToSheet(pages)];
+
+  const groups: Item[][][] = [];
+  let curTitle = "";
+  for (const page of pages) {
+    const items = mergeSuperscripts(page);
+    const t = normTitle(detectTitle(items));
+    const startsNew =
+      groups.length === 0 ||
+      (!!t &&
+        t !== curTitle &&
+        pageHasMasthead(items) &&
+        pageHasSongContent(items));
+    if (startsNew) {
+      groups.push([page]);
+      if (t) curTitle = t;
+    } else {
+      groups[groups.length - 1].push(page);
+    }
+  }
+
+  return groups.map((g) => pagesToSheet(g));
 }

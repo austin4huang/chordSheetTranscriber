@@ -79,6 +79,17 @@ export function parseChord(input: string): ParsedChord | null {
   return { root, quality, extensions: rest, bass, raw };
 }
 
+// Whether a key should spell accidentals with flats. Explicit accidentals
+// win (Bb/Eb… → flats, F#/C#… → sharps); among the natural-letter keys only
+// F is conventionally a flat key (one flat, Bb), the rest spell with sharps.
+export function keyPrefersFlats(key: string): boolean {
+  const m = key.trim().match(/^([A-G])(#|b)?/);
+  if (!m) return false;
+  if (m[2] === "b") return true;
+  if (m[2] === "#") return false;
+  return m[1] === "F";
+}
+
 // Transpose a chord symbol from one key to another, shifting the root (and
 // any slash bass) while preserving quality/extension text verbatim. Returns
 // the input unchanged for non-chords or a zero-interval transpose.
@@ -88,7 +99,7 @@ export function transposeChord(input: string, fromKey: string, toKey: string): s
   if (shift === 0) return input;
   // Spell accidentals to match the target key: a flat key (e.g. "Eb", "Bb")
   // yields flats, otherwise sharps.
-  const scale = toKey.slice(1).includes("b") ? FLAT_SCALE : SHARP_SCALE;
+  const scale = keyPrefersFlats(toKey) ? FLAT_SCALE : SHARP_SCALE;
   const shiftNote = (n: string) => scale[(noteToPitchClass(n) + shift) % 12];
 
   const raw = input.trim();

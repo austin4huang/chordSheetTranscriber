@@ -1,28 +1,200 @@
-.list-root {
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 2rem 1.5rem;
+/* The whole list app fills the viewport and never grows the page; the two
+   sections scroll internally instead. */
+.list-page {
   color: #1a1a1a;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
-.list-header {
+
+/* Header bar spanning the viewport (fixed height row of the flex column). */
+.app-header {
+  flex: 0 0 auto;
+  z-index: 30;
+  background: #ffffff;
+  border-bottom: 1px solid #e2e2e2;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+.app-header-inner {
+  /* Full page width: title flush-left, actions flush-right. */
+  width: 100%;
+  padding: 0.7rem 1.25rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 1.5rem;
+  gap: 1rem;
 }
-.list-header h1 { margin: 0; font-size: 1.6rem; }
-.list-actions { display: flex; gap: 0.5rem; }
+.app-header-inner h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.list-root {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1.25rem 1.5rem;
+  color: #1a1a1a;
+  /* Fill the space under the header; children scroll, this box doesn't. */
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Holds the two sections; each gets its own scrollbar, together they fill
+   the remaining height so the page never grows downward. */
+.list-scrollarea {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  overflow: hidden;
+}
+.sets-section,
+.songs-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* Sets are usually fewer — cap them so songs get the bulk of the space. */
+.sets-section { flex: 0 1 auto; max-height: 42%; }
+.songs-section { flex: 1 1 0; }
+/* Keep each section's title (and the sort control) visible while its list
+   scrolls underneath. */
+.list-scrollarea .section-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0 0 0.5rem;
+  padding: 0.4rem 0 0.5rem;
+  background: #f4f5f7;
+}
+
+/* Wide screens: Sets on the left, All songs on the right, each its own
+   scroll column, spanning the full page width. */
+@media (min-width: 900px) {
+  /* Two columns, but don't let lines stretch absurdly wide on big monitors
+     (stays centered via the base `margin: 0 auto`). */
+  .list-root { max-width: 1400px; }
+  /* Keep the header aligned with the (now capped) content block. */
+  .app-header-inner {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+  .list-scrollarea {
+    flex-direction: row;
+    gap: 0;
+  }
+  .sets-section,
+  .songs-section {
+    flex: 1 1 0;
+    min-width: 0;
+    max-height: none;
+    padding: 0 1.5rem;
+  }
+  .sets-section {
+    flex: 1 1 0;
+    border-right: 1px solid #e2e2e2;
+    padding-left: 0;
+  }
+  .songs-section {
+    flex: 1.4 1 0;
+    padding-right: 0;
+  }
+}
+
+.list-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: nowrap;          /* always one row */
+  justify-content: flex-end;  /* right aligned */
+  min-width: 0;
+}
 .list-actions button {
-  background: #2a6cdc;
-  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid transparent;
+  padding: 0.5rem 0.85rem;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, filter 0.12s;
+}
+.list-actions .btn-primary { background: #2a6cdc; color: #fff; }
+.list-actions .btn-primary:hover { filter: brightness(1.08); }
+.list-actions .btn-soft {
+  background: #f1f3f7;
+  color: #2f3a4a;
+  border-color: #dde1e8;
+}
+.list-actions .btn-soft:hover { background: #e7ebf2; }
+.list-actions button:disabled { opacity: 0.6; cursor: wait; }
+
+/* Import dropdown */
+.import-menu { position: relative; display: inline-flex; }
+.import-caret {
+  margin-left: 0.3rem;
+  font-size: 1.5rem;
+  /* Line box pinned to the icon height so a big glyph doesn't grow the
+     button; the ▾ glyph itself is short enough to stay within it. */
+  line-height: 1rem;
+  height: 1rem;
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.75;
+}
+.import-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 190px;
+  background: #fff;
+  border: 1px solid #dde1e8;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 0.3rem;
+  display: flex;
+  flex-direction: column;
+}
+.import-dropdown button {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  width: 100%;
+  text-align: left;
+  background: transparent;
   border: none;
-  padding: 0.55rem 1rem;
+  padding: 0.5rem 0.6rem;
   border-radius: 6px;
-  font-size: 0.9rem;
+  font-size: 0.88rem;
+  color: #2f3a4a;
   cursor: pointer;
 }
-.list-actions button:hover { filter: brightness(1.08); }
-.list-actions button:disabled { opacity: 0.6; cursor: wait; }
+.import-dropdown button:hover { background: #f1f3f7; }
+
+/* Collapse to icon-only when the header gets tight. */
+@media (max-width: 760px) {
+  .list-actions .btn-label { display: none; }
+  .list-actions button { padding: 0.5rem; }
+  .list-actions button svg { margin-right: 0 !important; }
+  .storage-badge { gap: 0; }
+}
 .banner {
   display: flex;
   align-items: center;
@@ -117,6 +289,7 @@
 }
 .sheet-item .open {
   flex: 1;
+  min-width: 0;
   text-align: left;
   padding: 0.85rem 1rem;
   background: transparent;
@@ -127,20 +300,64 @@
 .sheet-item .title { font-weight: 600; font-size: 1rem; }
 .sheet-item .meta { color: #777; font-size: 0.85rem; margin-top: 0.15rem; }
 .sheet-item .delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   color: #c33;
   border: none;
   border-left: 1px solid #eee;
-  padding: 0 1rem;
+  padding: 0 0.85rem;
   cursor: pointer;
   font-size: 0.85rem;
 }
 .sheet-item .delete:hover { background: #fff0f0; }
 .sheet-item .sheet-export { align-self: center; margin: 0 0.4rem; padding: 0.3rem 0.55rem; }
 
+/* Inline pencil sitting right beside the song title / set name. */
+.icon-btn {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #2a6cdc;
+  padding: 0.35rem;
+  border-radius: 6px;
+  line-height: 0;
+}
+.icon-btn:hover { background: #eef3fd; }
+.icon-btn svg { margin-right: 0 !important; }
+.title-edit { margin-left: 0.1rem; }
+/* Title + inline rename pencil on one line; the whole .open area (this row
+   plus the meta line and the empty space beside them) stays clickable to
+   open the editor — the pencil stops propagation so it only renames. */
+.sheet-item .title-row { display: flex; align-items: center; }
+/* Pushes the remaining row controls to the far right. */
+.row-spacer { flex: 1 1 auto; align-self: stretch; }
+
 /* Sets */
 .section-head { display: flex; align-items: baseline; justify-content: space-between; margin: 1.75rem 0 0.6rem; }
 .section-head h2 { margin: 0; font-size: 1.05rem; color: #374151; }
+.sort-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #777;
+  font-size: 0.85rem;
+}
+.sort-control select {
+  font: inherit;
+  font-size: 0.85rem;
+  color: #333;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid #d6d6d6;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
 .ghost-btn {
   background: #fff;
   color: #2a6cdc;
@@ -158,7 +375,8 @@
 .set-item { background: #fff; border: 1px solid #e2e2e2; border-radius: 8px; }
 .set-head { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.6rem 0.5rem 0.85rem; }
 .set-toggle {
-  flex: 1;
+  flex: 0 1 auto;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -172,14 +390,17 @@
 .set-name { font-weight: 600; }
 .set-count { color: #888; font-size: 0.8rem; }
 .set-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   color: #c33;
   border: none;
-  font-size: 0.82rem;
   cursor: pointer;
-  padding: 0.25rem 0.5rem;
+  padding: 0.3rem 0.4rem;
+  border-radius: 6px;
 }
-.set-del:hover { text-decoration: underline; }
+.set-del:hover { background: #fff0f0; }
 .set-songs { list-style: none; margin: 0; padding: 0 0 0.4rem; border-top: 1px solid #eee; }
 .set-empty { color: #999; font-size: 0.85rem; padding: 0.6rem 0.85rem; }
 .set-song { display: flex; align-items: center; gap: 0.5rem; padding: 0.1rem 0.6rem 0.1rem 0.85rem; }
@@ -252,6 +473,66 @@
 .url-import-actions { display: flex; align-items: center; gap: 0.5rem; }
 .url-import-actions .spacer { flex: 1; }
 .url-import-hint { color: #999; font-size: 0.78rem; }
+
+.storage-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.storage-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: #9aa0a6;
+}
+.storage-dot.is-green { background: #1a7f37; }
+.storage-dot.is-amber { background: #d29a00; }
+.storage-dot.is-gray { background: #9aa0a6; }
+
+.storage-panel {
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem;
+  background: #fff;
+  border: 1px solid #e2e2e2;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.storage-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.storage-row .spacer { flex: 1; }
+.storage-status { margin: 0; color: #555; font-size: 0.85rem; }
+.storage-msg {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #1a7f37;
+  background: #eaf6ec;
+  border: 1px solid #bfe3c6;
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+}
+
+.rename-form {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 1;
+  min-width: 0;
+}
+.rename-form input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 0.95rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #2a6cdc;
+  border-radius: 6px;
+  box-shadow: 0 0 0 2px rgba(42, 108, 220, 0.18);
+  outline: none;
+}
+.rename-form button { white-space: nowrap; }
+.sheet-rename { padding: 0.6rem 0.85rem; }
 
 /* "PDF" label next to the download icon — smaller than the button text.
    Global (plain CSS), so it also applies to the editor toolbar button. */

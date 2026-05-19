@@ -12,7 +12,7 @@ export interface SongSet {
   updatedAt: number;
 }
 
-interface Stored {
+export interface Stored {
   sheets: ChordSheet[];
   sets?: SongSet[];
 }
@@ -28,8 +28,39 @@ function read(): Stored {
   }
 }
 
+// Durable-storage layer subscribes here: every mutation funnels through
+// write(), so this is the single place to mirror the library to IndexedDB
+// and a linked device folder.
+let writeListener: ((s: Stored) => void) | null = null;
+export function onStoreWrite(cb: ((s: Stored) => void) | null) {
+  writeListener = cb;
+}
+
 function write(s: Stored) {
   localStorage.setItem(KEY, JSON.stringify(s));
+  try {
+    writeListener?.(s);
+  } catch {
+    /* persistence is best-effort; never block a local save */
+  }
+}
+
+/** Whole-library snapshot (for backup/export and folder sync). */
+export function readStore(): Stored {
+  const s = read();
+  return { sheets: s.sheets, sets: s.sets ?? [] };
+}
+
+/** Replace the entire library (restore from backup / linked folder).
+ *  `notify` writes through the persistence layer too (default); pass false
+ *  when applying data that *came from* that layer to avoid an echo. */
+export function replaceStore(s: Stored, notify = true) {
+  const clean: Stored = { sheets: s.sheets ?? [], sets: s.sets ?? [] };
+  if (notify) {
+    write(clean);
+  } else {
+    localStorage.setItem(KEY, JSON.stringify(clean));
+  }
 }
 
 export function listSheets(): ChordSheet[] {
@@ -187,6 +218,12 @@ export function emptySheetWithDefaults(): ChordSheet {
       { kind: "section", text: "VERSE 1" },
       { kind: "chordpro", text: "[C]Type your [G]lyrics here" },
     ] as SheetLine[],
+    createdAt: Date.now(),
     updatedAt: Date.now(),
   };
+}
+
+/** createdAt with a legacy fallback (older sheets have no createdAt). */
+export function createdAtOf(s: ChordSheet): number {
+  return s.createdAt ?? s.updatedAt;
 }

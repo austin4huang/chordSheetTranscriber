@@ -1,14 +1,21 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChordSheet } from "../lib/types";
 import type { SongSet } from "../lib/storage";
 import {
   listSheets, deleteSheet, saveSheet, emptySheetWithDefaults,
-  listSets, saveSet, deleteSet,
+  listSets, saveSet, deleteSet, createdAtOf,
 } from "../lib/storage";
-import { parsePdfToSheet, extractEmbeddedPayload } from "../lib/pdfParser";
+import { parsePdfToSheets, extractEmbeddedPayload } from "../lib/pdfParser";
 import { exportSongPdf, exportSetPdf } from "../lib/pdfExport";
 import { importChords, toChordSheet } from "../lib/chordImport";
-import { DownloadIcon } from "./icons";
+import {
+  DownloadIcon, EditIcon, TrashIcon, PlusIcon, FileImportIcon, LinkIcon,
+  TextImportIcon,
+} from "./icons";
+import {
+  getStorageStatus, downloadBackup, restoreBackup, linkFolder,
+  reconnectFolder, unlinkFolder, onLibraryChanged, type StorageStatus,
+} from "../lib/persist";
 import "./SheetList.css";
 
 interface Props {
@@ -24,13 +31,96 @@ export function SheetList({ onOpen }: Props) {
   const [newSetName, setNewSetName] = useState("");
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
-  const [urlOpen, setUrlOpen] = useState(false);
+  const [importMode, setImportMode] = useState<"url" | "text" | null>(null);
+  const [importMenuOpen, setImportMenuOpen] = useState(false);
   const [urlText, setUrlText] = useState("");
+  const importMenuRef = useRef<HTMLDivElement>(null);
+  const [renaming, setRenaming] = useState<
+    { kind: "song" | "set"; id: string } | null
+  >(null);
+  const [renameText, setRenameText] = useState("");
+  const [sortBy, setSortBy] = useState<"modified" | "title" | "created">(
+    "modified",
+  );
+  const [storageOpen, setStorageOpen] = useState(false);
+  const [storageStatus, setStorageStatus] = useState<StorageStatus | null>(null);
+  const [storageMsg, setStorageMsg] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const restoreRef = useRef<HTMLInputElement>(null);
 
   const refresh = () => {
     setSheets(listSheets());
     setSets(listSets());
+  };
+
+  const refreshStorage = () =>
+    getStorageStatus().then(setStorageStatus).catch(() => {});
+
+  // Load storage status for the header badge, and keep it (and the list) in
+  // sync when the library is replaced externally (folder load / restore).
+  useEffect(() => {
+    refreshStorage();
+    return onLibraryChanged(() => {
+      refresh();
+      refreshStorage();
+    });
+  }, []);
+
+  // Close the Import menu on outside click / Escape.
+  useEffect(() => {
+    if (!importMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!importMenuRef.current?.contains(e.target as Node)) {
+        setImportMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setImportMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [importMenuOpen]);
+
+  const storageAction = async (fn: () => Promise<unknown>, ok: string) => {
+    setStorageMsg(null);
+    try {
+      await fn();
+      refresh();
+      await refreshStorage();
+      setStorageMsg(ok);
+    } catch (e) {
+      if ((e as DOMException)?.name === "AbortError") return; // user cancelled
+      setStorageMsg(e instanceof Error ? e.message : "Something went wrong.");
+    }
+  };
+
+  const beginRename = (kind: "song" | "set", id: string, current: string) => {
+    setRenaming({ kind, id });
+    setRenameText(current);
+  };
+  const cancelRename = () => {
+    setRenaming(null);
+    setRenameText("");
+  };
+  const commitRename = () => {
+    if (!renaming) return;
+    const name = renameText.trim();
+    if (name) {
+      if (renaming.kind === "set") {
+        const set = sets.find((s) => s.id === renaming.id);
+        if (set && name !== set.name) saveSet({ ...set, name });
+      } else {
+        const sh = sheets.find((s) => s.id === renaming.id);
+        if (sh && name !== sh.title) saveSheet({ ...sh, title: name });
+      }
+    }
+    setRenaming(null);
+    setRenameText("");
+    refresh();
   };
 
   const onNew = () => {
@@ -49,6 +139,7 @@ export function SheetList({ onOpen }: Props) {
         const sheet: ChordSheet = {
           ...payload.sheet,
           id: crypto.randomUUID(),
+          createdAt: payload.sheet.createdAt ?? Date.now(),
           updatedAt: Date.now(),
         };
         saveSheet(sheet);
@@ -61,6 +152,7 @@ export function SheetList({ onOpen }: Props) {
           const sheet: ChordSheet = {
             ...s,
             id: crypto.randomUUID(),
+            createdAt: s.createdAt ?? Date.now(),
             updatedAt: Date.now(),
           };
           saveSheet(sheet);
@@ -78,26 +170,49 @@ export function SheetList({ onOpen }: Props) {
         return;
       }
 
-      const partial = await parsePdfToSheet(file);
-      const lines = partial.lines || [];
-      const hasContent = lines.some((l) => l.kind !== "blank" && l.text.trim());
-      if (!hasContent) {
+      const parsed = await parsePdfToSheets(file);
+      const songs = parsed.filter((p) =>
+        (p.lines || []).some((l) => l.kind !== "blank" && l.text.trim()),
+      );
+      if (songs.length === 0) {
         setImportError(
           "No text found in this PDF. Scanned or image-based PDFs aren't supported — " +
             "use an electronic chord sheet (e.g. SongSelect).",
         );
         return;
       }
-      const sheet: ChordSheet = {
+
+      const fallbackName = file.name.replace(/\.pdf$/i, "");
+      const made = songs.map((p, i) => {
+        const sheet: ChordSheet = {
+          id: crypto.randomUUID(),
+          title: p.title || `${fallbackName}${songs.length > 1 ? ` (${i + 1})` : ""}`,
+          key: p.key || "C",
+          mode: p.mode || "major",
+          lines: p.lines || [],
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        saveSheet(sheet);
+        return sheet;
+      });
+
+      if (made.length === 1) {
+        onOpen(made[0].id);
+        return;
+      }
+
+      // Multiple songs in one PDF → bundle them into a new set.
+      const newSet: SongSet = {
         id: crypto.randomUUID(),
-        title: partial.title || file.name.replace(/\.pdf$/i, ""),
-        key: partial.key || "C",
-        mode: partial.mode || "major",
-        lines,
+        name: fallbackName,
+        sheetIds: made.map((s) => s.id),
         updatedAt: Date.now(),
       };
-      saveSheet(sheet);
-      onOpen(sheet.id);
+      saveSet(newSet);
+      refresh();
+      setExpanded(newSet.id);
+      onOpen(made[0].id, newSet.id);
     } catch (e) {
       console.error(e);
       setImportError(
@@ -116,7 +231,7 @@ export function SheetList({ onOpen }: Props) {
       const sheet = toChordSheet(imported);
       saveSheet(sheet);
       setUrlText("");
-      setUrlOpen(false);
+      setImportMode(null);
       onOpen(sheet.id);
     } catch (e) {
       setImportError(
@@ -184,9 +299,22 @@ export function SheetList({ onOpen }: Props) {
 
   const q = query.trim().toLowerCase();
   const matches = (t?: string) => !!t && t.toLowerCase().includes(q);
-  const visibleSheets = q
-    ? sheets.filter((s) => matches(s.title) || matches(s.artist))
-    : sheets;
+  const sortSheets = (list: ChordSheet[]) => {
+    const arr = [...list];
+    if (sortBy === "title") {
+      arr.sort((a, b) =>
+        a.title.localeCompare(b.title, undefined, { sensitivity: "base" }),
+      );
+    } else if (sortBy === "created") {
+      arr.sort((a, b) => createdAtOf(b) - createdAtOf(a));
+    } else {
+      arr.sort((a, b) => b.updatedAt - a.updatedAt);
+    }
+    return arr;
+  };
+  const visibleSheets = sortSheets(
+    q ? sheets.filter((s) => matches(s.title) || matches(s.artist)) : sheets,
+  );
   const visibleSets = q
     ? sets.filter(
         (set) => matches(set.name) || set.sheetIds.some((id) => matches(titleOf(id))),
@@ -194,23 +322,105 @@ export function SheetList({ onOpen }: Props) {
     : sets;
 
   return (
-    <div className="list-root">
-      <header className="list-header">
+    <div className="list-page">
+      <header className="app-header">
+        <div className="app-header-inner">
         <h1>Chord Sheets</h1>
         <div className="list-actions">
-          <button onClick={onNew}>+ New sheet</button>
-          <button onClick={() => fileRef.current?.click()} disabled={importing}>
-            {importing ? "Importing…" : "Import PDF"}
-          </button>
           <button
-            onClick={() => {
-              setImportError(null);
-              setUrlOpen((o) => !o);
-            }}
-            disabled={importing}
+            className="btn-primary"
+            onClick={onNew}
+            title="New sheet"
           >
-            Import from URL
+            <PlusIcon />
+            <span className="btn-label">New sheet</span>
           </button>
+          <div className="import-menu" ref={importMenuRef}>
+            <button
+              className="btn-soft"
+              onClick={() => setImportMenuOpen((o) => !o)}
+              disabled={importing}
+              title="Import a chord sheet"
+              aria-haspopup="menu"
+              aria-expanded={importMenuOpen}
+            >
+              <FileImportIcon />
+              <span className="btn-label">
+                {importing ? "Importing…" : "Import"}
+              </span>
+              <span className="import-caret" aria-hidden="true">▾</span>
+            </button>
+            {importMenuOpen && (
+              <div className="import-dropdown" role="menu">
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setImportMenuOpen(false);
+                    fileRef.current?.click();
+                  }}
+                >
+                  <FileImportIcon />
+                  PDF…
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setImportError(null);
+                    setImportMenuOpen(false);
+                    setImportMode("url");
+                  }}
+                >
+                  <LinkIcon />
+                  From URL…
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setImportError(null);
+                    setImportMenuOpen(false);
+                    setImportMode("text");
+                  }}
+                >
+                  <TextImportIcon />
+                  Paste text…
+                </button>
+              </div>
+            )}
+          </div>
+          {(() => {
+            const fs = storageStatus;
+            let dot = "gray";
+            let text = "Storage";
+            if (fs) {
+              const name =
+                fs.folderName && fs.folderName.length > 16
+                  ? fs.folderName.slice(0, 15) + "…"
+                  : fs.folderName;
+              if (fs.folderName && fs.folderConnected) {
+                dot = "green";
+                text = `Saving to ${name}`;
+              } else if (fs.folderName) {
+                dot = "amber";
+                text = "Folder — reconnect";
+              } else if (fs.folderSupported) {
+                dot = "gray";
+                text = fs.persistent ? "Local (persistent)" : "Local only";
+              } else {
+                dot = "gray";
+                text = "Backup only";
+              }
+            }
+            return (
+              <button
+                className="btn-soft storage-badge"
+                onClick={() => setStorageOpen((o) => !o)}
+                title="Storage & backup"
+              >
+                <span className={`storage-dot is-${dot}`} aria-hidden="true" />
+                <span className="btn-label">{text}</span>
+              </button>
+            );
+          })()}
           <input
             ref={fileRef}
             type="file"
@@ -222,10 +432,102 @@ export function SheetList({ onOpen }: Props) {
               e.target.value = "";
             }}
           />
+          <input
+            ref={restoreRef}
+            type="file"
+            accept="application/json,.json"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) storageAction(() => restoreBackup(f), "Library restored.");
+              e.target.value = "";
+            }}
+          />
+        </div>
         </div>
       </header>
 
-      {urlOpen && (
+      <div className="list-root">
+      {storageOpen && (
+        <div className="storage-panel">
+          <div className="storage-row">
+            <strong>Storage &amp; backup</strong>
+            <span className="spacer" />
+            <button className="ghost-btn" onClick={() => setStorageOpen(false)}>
+              Close
+            </button>
+          </div>
+          <p className="storage-status">
+            {storageStatus?.persistent
+              ? "✓ Persistent storage granted (the browser won't auto-evict your library)."
+              : "Using best-effort browser storage — link a folder below for real durability."}
+          </p>
+
+          <div className="storage-row">
+            <button className="ghost-btn" onClick={downloadBackup}>
+              ⭳ Save backup (.json)
+            </button>
+            <button
+              className="ghost-btn"
+              onClick={() => restoreRef.current?.click()}
+            >
+              Restore from backup…
+            </button>
+          </div>
+
+          {storageStatus?.folderSupported ? (
+            <div className="storage-row">
+              {storageStatus.folderName ? (
+                <>
+                  <span className="storage-status">
+                    Folder: <strong>{storageStatus.folderName}</strong>{" "}
+                    {storageStatus.folderConnected
+                      ? "· connected (auto-saving)"
+                      : "· not connected"}
+                  </span>
+                  <span className="spacer" />
+                  {!storageStatus.folderConnected && (
+                    <button
+                      className="ghost-btn"
+                      onClick={() =>
+                        storageAction(reconnectFolder, "Folder reconnected.")
+                      }
+                    >
+                      Reconnect
+                    </button>
+                  )}
+                  <button
+                    className="ghost-btn"
+                    onClick={() =>
+                      storageAction(unlinkFolder, "Folder unlinked.")
+                    }
+                  >
+                    Unlink
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="ghost-btn"
+                  onClick={() =>
+                    storageAction(linkFolder, "Folder linked — auto-saving here.")
+                  }
+                >
+                  Link a device folder (auto-save)
+                </button>
+              )}
+            </div>
+          ) : (
+            <p className="storage-status">
+              This browser can't save to a device folder (Chromium only). Use
+              Save/Restore backup instead.
+            </p>
+          )}
+
+          {storageMsg && <p className="storage-msg">{storageMsg}</p>}
+        </div>
+      )}
+
+      {importMode && (
         <form
           className="url-import"
           onSubmit={(e) => {
@@ -235,24 +537,26 @@ export function SheetList({ onOpen }: Props) {
         >
           <textarea
             autoFocus
-            rows={4}
+            rows={importMode === "text" ? 8 : 4}
             placeholder={
-              "Paste an Ultimate-Guitar URL — or, if fetching is blocked, the " +
-              "page source (View → Page Source) or the raw tab text."
+              importMode === "url"
+                ? "Paste an Ultimate-Guitar URL (or its page source if fetching is blocked)."
+                : "Paste chord text — ChordPro, Ultimate-Guitar tab text, or a " +
+                  "worship-site copy with chords on their own lines."
             }
             value={urlText}
             onChange={(e) => setUrlText(e.target.value)}
           />
           <div className="url-import-actions">
             <span className="url-import-hint">
-              Crowd-sourced &amp; copyrighted — for personal/licensed use; verify accuracy.
+              Copyrighted — for personal/licensed use; verify accuracy.
             </span>
             <span className="spacer" />
             <button
               type="button"
               className="ghost-btn"
               onClick={() => {
-                setUrlOpen(false);
+                setImportMode(null);
                 setUrlText("");
               }}
             >
@@ -300,6 +604,7 @@ export function SheetList({ onOpen }: Props) {
         </div>
       )}
 
+      <div className="list-scrollarea">
       <section className="sets-section">
         <div className="section-head">
           <h2>Sets</h2>
@@ -350,14 +655,53 @@ export function SheetList({ onOpen }: Props) {
               return (
                 <li key={set.id} className="set-item">
                   <div className="set-head">
-                    <button
-                      className="set-toggle"
-                      onClick={() => setExpanded(open ? null : set.id)}
-                    >
-                      <span className="set-caret">{open ? "▾" : "▸"}</span>
-                      <span className="set-name">{set.name}</span>
-                      <span className="set-count">{set.sheetIds.length} songs</span>
-                    </button>
+                    {renaming?.kind === "set" && renaming.id === set.id ? (
+                      <form
+                        className="rename-form"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          commitRename();
+                        }}
+                      >
+                        <input
+                          autoFocus
+                          value={renameText}
+                          onChange={(e) => setRenameText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Escape") cancelRename();
+                          }}
+                          aria-label="Set name"
+                        />
+                        <button type="submit" className="primary" disabled={!renameText.trim()}>
+                          Save
+                        </button>
+                        <button type="button" className="ghost-btn" onClick={cancelRename}>
+                          Cancel
+                        </button>
+                      </form>
+                    ) : (
+                      <button
+                        className="set-toggle"
+                        onClick={() => setExpanded(open ? null : set.id)}
+                      >
+                        <span className="set-caret">{open ? "▾" : "▸"}</span>
+                        <span className="set-name">{set.name}</span>
+                        <span className="set-count">{set.sheetIds.length} songs</span>
+                      </button>
+                    )}
+                    {!(renaming?.kind === "set" && renaming.id === set.id) && (
+                      <>
+                        <button
+                          className="icon-btn title-edit"
+                          title="Rename set"
+                          aria-label="Rename set"
+                          onClick={() => beginRename("set", set.id, set.name)}
+                        >
+                          <EditIcon size={16} />
+                        </button>
+                        <span className="row-spacer" />
+                      </>
+                    )}
                     {set.sheetIds.length > 0 && (
                       <button
                         className="ghost-btn"
@@ -382,8 +726,13 @@ export function SheetList({ onOpen }: Props) {
                         <DownloadIcon /><span className="btn-pdf-label">PDF</span>
                       </button>
                     )}
-                    <button className="set-del" onClick={() => removeSet(set.id)}>
-                      Delete
+                    <button
+                      className="set-del"
+                      title="Delete set"
+                      aria-label="Delete set"
+                      onClick={() => removeSet(set.id)}
+                    >
+                      <TrashIcon />
                     </button>
                   </div>
                   {open && (
@@ -427,9 +776,23 @@ export function SheetList({ onOpen }: Props) {
         )}
       </section>
 
-      <section>
+      <section className="songs-section">
         <div className="section-head">
           <h2>All songs</h2>
+          <label className="sort-control">
+            Sort:
+            <select
+              value={sortBy}
+              onChange={(e) =>
+                setSortBy(e.target.value as "modified" | "title" | "created")
+              }
+              aria-label="Sort songs"
+            >
+              <option value="modified">Last modified</option>
+              <option value="created">Date created</option>
+              <option value="title">Alphabetical</option>
+            </select>
+          </label>
         </div>
         {sheets.length === 0 ? (
           <div className="empty">
@@ -452,15 +815,65 @@ export function SheetList({ onOpen }: Props) {
           <ul className="sheets">
             {visibleSheets.map((s) => (
               <li key={s.id} className="sheet-item">
-                <button className="open" onClick={() => onOpen(s.id)}>
-                  <div className="title">{s.title}</div>
-                  <div className="meta">
-                    Key {s.key}{s.mode === "minor" ? "m" : ""}
-                    {s.artist ? ` · ${s.artist}` : ""}
-                    {" · "}
-                    {new Date(s.updatedAt).toLocaleDateString()}
+                {renaming?.kind === "song" && renaming.id === s.id ? (
+                  <form
+                    className="rename-form sheet-rename"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      commitRename();
+                    }}
+                  >
+                    <input
+                      autoFocus
+                      value={renameText}
+                      onChange={(e) => setRenameText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") cancelRename();
+                      }}
+                      aria-label="Song title"
+                    />
+                    <button type="submit" className="primary" disabled={!renameText.trim()}>
+                      Save
+                    </button>
+                    <button type="button" className="ghost-btn" onClick={cancelRename}>
+                      Cancel
+                    </button>
+                  </form>
+                ) : (
+                  <div
+                    className="open"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onOpen(s.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onOpen(s.id);
+                      }
+                    }}
+                  >
+                    <div className="title-row">
+                      <span className="title">{s.title}</span>
+                      <button
+                        className="icon-btn title-edit"
+                        title="Rename song title"
+                        aria-label="Rename song title"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          beginRename("song", s.id, s.title);
+                        }}
+                      >
+                        <EditIcon size={16} />
+                      </button>
+                    </div>
+                    <div className="meta">
+                      Key {s.key}{s.mode === "minor" ? "m" : ""}
+                      {s.artist ? ` · ${s.artist}` : ""}
+                      {" · "}
+                      {new Date(s.updatedAt).toLocaleDateString()}
+                    </div>
                   </div>
-                </button>
+                )}
                 {sets.length > 0 && (
                   <select
                     className="add-to-set"
@@ -484,12 +897,21 @@ export function SheetList({ onOpen }: Props) {
                 >
                   <DownloadIcon /><span className="btn-pdf-label">PDF</span>
                 </button>
-                <button className="delete" onClick={() => onDelete(s.id)}>Delete</button>
+                <button
+                  className="delete"
+                  title="Delete song"
+                  aria-label="Delete song"
+                  onClick={() => onDelete(s.id)}
+                >
+                  <TrashIcon />
+                </button>
               </li>
             ))}
           </ul>
         )}
       </section>
+      </div>
+      </div>
     </div>
   );
 }

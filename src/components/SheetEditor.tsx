@@ -9,7 +9,7 @@ import {
 } from "react";
 import type { ChordSheet, Stroke, TextNote } from "../lib/types";
 import { linesToText, textToSheet, saveSheet } from "../lib/storage";
-import { noteToPitchClass } from "../lib/nashville";
+import { noteToPitchClass, keyPrefersFlats } from "../lib/nashville";
 import { SheetRenderer } from "./SheetRenderer";
 import { exportRenderedPdf } from "../lib/pdfExport";
 import { DownloadIcon } from "./icons";
@@ -39,9 +39,9 @@ function spellKey(pc: number, flats: boolean): string {
   return (flats ? FLAT_NAMES : SHARP_NAMES)[pc];
 }
 
-function isFlatSpelling(note: string): boolean {
-  return note.slice(1).includes("b");
-}
+// F (major or its relatives) is a flat key even though its name has no "b";
+// keyPrefersFlats handles that. Explicit sharps/flats still win.
+const isFlatSpelling = keyPrefersFlats;
 
 interface SetNav {
   name: string;

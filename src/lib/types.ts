@@ -40,16 +40,19 @@ export interface ChordSheet {
   lines: SheetLine[];
   annotations?: Stroke[];
   texts?: TextNote[];
+  createdAt?: number;     // unset on legacy sheets — fall back to updatedAt
   updatedAt: number;
 }
 
 export function blankSheet(): ChordSheet {
+  const now = Date.now();
   return {
     id: crypto.randomUUID(),
     title: "Untitled",
     key: "C",
     mode: "major",
     lines: [],
-    updatedAt: Date.now(),
+    createdAt: now,
+    updatedAt: now,
   };
 }

@@ -191,9 +191,233 @@ function fromUgStore(store: any): ImportedSheet | null {
   };
 }
 
+// --- "interleaved" web-copy format -----------------------------------------
+// Worship-site copies put each chord on its own line, splitting it into the
+// lyric ("Falling down in w" / "Db" / "orship"). Sections are bare lines and
+// there may be a "| Gb / / Bbm |" style bar line.
+
+const INTERLEAVED_CHORD =
+  /^[A-G](?:#|b)?(?:m|maj|min|dim|aug|sus|add)*\d*(?:\([^)]*\))?(?:sus)?\d*(?:\/[A-G](?:#|b)?)?$/;
+
+const INTERLEAVED_SECTION =
+  /^(intro|verses?|pre[\s-]?chorus|chorus|half[\s-]?chorus|bridge|tag|outro|ending|interlude|instrumental|refrain|vamp|turnaround|hook|coda|repeat)\b/i;
+
+function isInterleavedChord(t: string): boolean {
+  // A lone single letter ("A thousand…") is the word, not a chord — real
+  // chords in this format are virtually always multi-character.
+  if (t.length < 2) return false;
+  return INTERLEAVED_CHORD.test(t);
+}
+
+function isInterleavedSection(t: string): boolean {
+  return (
+    t.length <= 40 &&
+    !t.includes("|") &&
+    !isInterleavedChord(t) &&
+    INTERLEAVED_SECTION.test(t)
+  );
+}
+
+function parseInterleaved(text: string): ImportedSheet {
+  const rawLines = text.replace(/\r/g, "").split("\n");
+  const lines: SheetLine[] = [];
+  let cur = "";
+  let pending: string | null = null;
+  let firstChord: string | null = null;
+
+  const flush = () => {
+    if (pending && cur.trim() !== "") {
+      cur += `[${pending}]`;
+      pending = null;
+    }
+    if (cur.trim() !== "") {
+      lines.push({ kind: "chordpro", text: cur.trim() });
+    } else if (pending) {
+      lines.push({ kind: "chord-only", text: pending });
+    }
+    cur = "";
+    pending = null;
+  };
+
+  for (const line of rawLines) {
+    const t = line.trim();
+    if (t === "") {
+      flush();
+      continue;
+    }
+    if (isInterleavedSection(t)) {
+      flush();
+      lines.push({ kind: "section", text: t.replace(/\s+/g, " ") });
+      continue;
+    }
+    if (t.includes("|")) {
+      flush();
+      lines.push({ kind: "chord-only", text: t });
+      continue;
+    }
+    if (isInterleavedChord(t)) {
+      if (!firstChord) firstChord = t;
+      pending = t;
+      continue;
+    }
+    // lyric fragment — keep the line's own spacing verbatim: a mid-word
+    // split has no trailing space ("w" → "[Db]orship"), a word boundary
+    // keeps its space ("A " → "A [Db]thousand"). Trim only the line's
+    // leading indentation when it's the start of the lyric line.
+    if (pending) {
+      // If the chord joins two phrases (next fragment starts a new word,
+      // i.e. uppercase) but the previous fragment lost its trailing space,
+      // restore it. Mid-word continuations are lowercase, so they're safe.
+      if (cur !== "" && !/\s$/.test(cur) && /^\s*[A-Z]/.test(line)) {
+        cur += " ";
+      }
+      cur += `[${pending}]`;
+      pending = null;
+    }
+    cur += cur === "" ? line.replace(/^\s+/, "") : line;
+  }
+  flush();
+
+  // Collapse blank runs the format leaves behind.
+  while (lines.length && lines[0].kind === "blank") lines.shift();
+  while (lines.length && lines.at(-1)!.kind === "blank") lines.pop();
+
+  const keyM = firstChord?.match(/^[A-G](?:#|b)?/);
+  return {
+    title: "Imported song",
+    key: keyM ? keyM[0] : "C",
+    mode: "major",
+    lines,
+  };
+}
+
+// --- "chords above lyrics" format ------------------------------------------
+// The classic plain-text layout: [Section] headers, a chord row whose chords
+// are positioned by spaces over the lyric row beneath, "| / / |" rhythm bars,
+// "(Ab)" optional chords, and stray ">" accent cues.
+
+const CO_CHORD =
+  /^\(?[A-G](?:#|b)?(?:m|maj|min|dim|aug|sus|add)*\d*(?:\([^)]*\))?(?:sus)?\d*(?:\/[A-G](?:#|b)?)?\)?$/;
+const CO_BAR = /^(?:[|/]+|>)$/;
+
+const coIsChord = (t: string) => CO_CHORD.test(t);
+const coChordName = (t: string) => t.replace(/^\(+|\)+$/g, "");
+
+function coClassify(line: string): "section" | "bar" | "chords" | "cue" | "lyric" | "blank" {
+  const t = line.trim();
+  if (t === "") return "blank";
+  if (/^\[[^\]]+\]/.test(t)) return "section";
+  if (t === ">" || /^>+$/.test(t)) return "cue";
+  const toks = t.split(/\s+/);
+  const chords = toks.filter(coIsChord);
+  if (chords.length > 0 && toks.every((x) => coIsChord(x) || CO_BAR.test(x))) {
+    return toks.some((x) => CO_BAR.test(x)) ? "bar" : "chords";
+  }
+  return "lyric";
+}
+
+/** Insert each chord into the lyric at the column it sits above. */
+function coMerge(chordLine: string, lyric: string): string {
+  const toks: { col: number; name: string }[] = [];
+  for (let i = 0; i < chordLine.length; ) {
+    if (chordLine[i] === " " || chordLine[i] === "\t") {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j < chordLine.length && !/\s/.test(chordLine[j])) j++;
+    const raw = chordLine.slice(i, j);
+    if (coIsChord(raw)) toks.push({ col: i, name: coChordName(raw) });
+    i = j;
+  }
+  let lyr = lyric.replace(/\s+$/, "");
+  let out = "";
+  let cursor = 0;
+  for (const c of toks) {
+    let pos = Math.max(cursor, c.col);
+    if (pos > lyr.length) lyr = lyr.padEnd(pos);
+    out += lyr.slice(cursor, pos) + `[${c.name}]`;
+    cursor = pos;
+  }
+  out += lyr.slice(cursor);
+  // Tidy a leading chord that sits over the lyric's indentation.
+  return out.replace(/^\s+/, "").replace(/^(\[[^\]]+\])\s+/, "$1");
+}
+
+function parseChordOverLyrics(text: string): ImportedSheet {
+  const raw = text.replace(/\r/g, "").split("\n");
+  const lines: SheetLine[] = [];
+  let firstChord: string | null = null;
+  const noteFirst = (s: string) => {
+    if (!firstChord) {
+      const m = coChordName(s.split(/\s+/).find(coIsChord) ?? "").match(
+        /^[A-G](?:#|b)?/,
+      );
+      if (m) firstChord = m[0];
+    }
+  };
+
+  for (let i = 0; i < raw.length; i++) {
+    const line = raw[i];
+    const kind = coClassify(line);
+    if (kind === "blank") {
+      lines.push({ kind: "blank", text: "" });
+      continue;
+    }
+    if (kind === "cue") continue; // ">" accent marker — drop
+    if (kind === "section") {
+      const name = (line.match(/\[([^\]]+)\]/g) || [])
+        .map((b) => b.slice(1, -1).trim())
+        .join(" ")
+        .trim();
+      lines.push({ kind: "section", text: name || line.trim() });
+      continue;
+    }
+    if (kind === "bar") {
+      noteFirst(line);
+      // Drop lone ">" cue tokens; keep the rhythm/bar line verbatim.
+      lines.push({
+        kind: "chord-only",
+        text: line.trim().replace(/\s*>\s*/g, " ").trim(),
+      });
+      continue;
+    }
+    if (kind === "chords") {
+      noteFirst(line);
+      // Skip blank/cue lines to find the row this chord line sits over.
+      let j = i + 1;
+      while (j < raw.length && coClassify(raw[j]) === "cue") j++;
+      const next = j < raw.length ? raw[j] : "";
+      if (next.trim() !== "" && coClassify(next) === "lyric") {
+        lines.push({ kind: "chordpro", text: coMerge(line, next) });
+        i = j; // consumed the lyric row
+      } else {
+        lines.push({ kind: "chord-only", text: line.trim() });
+      }
+      continue;
+    }
+    // plain lyric with no chord row above it
+    lines.push({ kind: "chordpro", text: line.trim() });
+  }
+
+  while (lines.length && lines[0].kind === "blank") lines.shift();
+  while (lines.length && lines.at(-1)!.kind === "blank") lines.pop();
+
+  return {
+    title: "Imported song",
+    key: firstChord ?? "C",
+    mode: "major",
+    lines,
+  };
+}
+
+const HAS_BRACKET_SECTIONS = /^[ \t]*\[[^\]\n]+\][ \t]*$/m;
+
 /**
  * Accepts: an Ultimate-Guitar URL (fetched via proxy), pasted page source,
- * or raw tab text containing [ch]/[tab] markers.
+ * raw tab text with [ch]/[tab] markers, or pasted chord text — either the
+ * "interleaved" worship-copy style or the classic "chords above lyrics"
+ * layout with [Section] headers.
  */
 export async function importChords(input: string): Promise<ImportedSheet> {
   const text = input.trim();
@@ -230,9 +454,29 @@ export async function importChords(input: string): Promise<ImportedSheet> {
     }
   }
 
+  // Classic "chords above lyrics" with [Section] headers.
+  if (HAS_BRACKET_SECTIONS.test(text)) {
+    const co = parseChordOverLyrics(text);
+    if (
+      co.lines.some((l) => l.kind !== "blank" && l.text.trim() !== "")
+    ) {
+      return co;
+    }
+  }
+
+  // Generic worship-site "copy" text: chords interleaved into the lyrics.
+  const interleaved = parseInterleaved(text);
+  if (
+    interleaved.lines.some(
+      (l) => l.kind !== "blank" && l.text.trim() !== "",
+    )
+  ) {
+    return interleaved;
+  }
+
   throw new Error(
-    "Unrecognized input. Paste an Ultimate-Guitar URL, the page source, or " +
-      "the tab text (it should contain [ch] chord markers).",
+    "Unrecognized input. Paste an Ultimate-Guitar URL/page source, or pasted " +
+      "chord text (chords inline or on their own lines).",
   );
 }
 
@@ -244,6 +488,7 @@ export function toChordSheet(s: ImportedSheet): ChordSheet {
     key: s.key,
     mode: s.mode,
     lines: s.lines,
+    createdAt: Date.now(),
     updatedAt: Date.now(),
   };
 }
