@@ -253,6 +253,11 @@ function classifyRow(row: Item[]): "chord" | "chord-only-line" | "lyric" | "sect
   // (and never a chord/bar-line/lyric) is dropped rather than emitted.
   const ORPHAN_EXT = /^\(?(?:sus\d?|add\d{1,2}|maj\d?|min|dim|aug|m|\d{1,2})\)?$/i;
   if (tokens.every((t) => ORPHAN_EXT.test(t))) return "other";
+  // Plain-PDF song masthead, e.g. "One Way Jesus – (G)" — drop from the body
+  // (the title/key are recovered separately by detectSongHeader).
+  if (all.length < 60 && SONG_HEADER_RE.test(all)) return "header";
+  // Bracketed section label(s): "[Verse 2]", "[Bridge] [x2]".
+  if (BRACKET_SECTION_RE.test(all.trim())) return "section";
   // Section header: usually all caps single short label
   if (
     tokens.length <= 3 &&
@@ -412,7 +417,11 @@ function emitRows(rows: Item[][], lines: SheetLine[]): void {
     const cur = tagged[i];
     if (cur.kind === "header") { i++; continue; }
     if (cur.kind === "section") {
-      lines.push({ kind: "section", text: recoverLigatures(cur.row.map((x) => x.text).join(" ").trim()) });
+      const secText = recoverLigatures(cur.row.map((x) => x.text).join(" ").trim())
+        .replace(/[[\]]/g, " ") // strip "[Verse 2]" / "[Bridge] [x2]" brackets
+        .replace(/\s+/g, " ")
+        .trim();
+      lines.push({ kind: "section", text: secText });
       i++;
       continue;
     }
@@ -489,6 +498,32 @@ function normTitle(s: string | null): string {
 const SECTION_KEYWORD_RE =
   /\b(INTRO|VERSE|CHORUS|PRE[- ]?CHORUS|BRIDGE|INSTRUMENTAL|INTERLUDE|TURNAROUND|TAG|OUTRO|ENDING|REFRAIN|VAMP)\b/i;
 
+// A "song title – (Key)" masthead used by plain (non-SongSelect) chord PDFs,
+// e.g. "One Way Jesus – (G)", "Here I Bow – (D)". The title text excludes
+// "[" / "]" so it can't swallow an adjacent bracket section label.
+const SONG_HEADER_RE =
+  /([A-Za-z0-9][A-Za-z0-9'’&.,! ]{0,48}?)\s*[–—-]\s*\(([A-G](?:#|b)?)(m)?\)/;
+
+// A row that's only bracketed section label(s): "[Verse 2]", "[Bridge] [x2]".
+const BRACKET_SECTION_RE = /^(?:\[[^\]]+\]\s*)+$/;
+
+function detectSongHeader(
+  items: Item[],
+): { title: string; key: string; mode: "major" | "minor" } | null {
+  // Look near the top of the page (titles sit at/near the top).
+  const top = [...items].sort((a, b) => b.y - a.y).slice(0, 16);
+  const joined = top.map((i) => i.text).join(" ");
+  const m = joined.match(SONG_HEADER_RE);
+  if (!m) return null;
+  const title = m[1].trim().replace(/\s+/g, " ");
+  if (!title) return null;
+  return {
+    title,
+    key: m[2][0].toUpperCase() + m[2].slice(1),
+    mode: m[3] ? "minor" : "major",
+  };
+}
+
 // A song's first page in a SongSelect-style bundle carries metadata: a
 // "Key -"/"Tempo -" header and/or a CCLI/SongSelect footer.
 function pageHasMasthead(pageItems: Item[]): boolean {
@@ -543,8 +578,13 @@ function pagesToSheet(pages: Item[][]): Partial<ChordSheet> {
   const firstSection = lines.findIndex((l) => l.kind === "section");
   if (firstSection > 0) lines.splice(0, firstSection);
 
-  const keyInfo = detectKey(allItems);
-  const title = detectTitle(allItems);
+  // Prefer a "Name – (Key)" masthead (plain chord PDFs); fall back to the
+  // CCLI "Key -" line and the topmost text.
+  const hdr = detectSongHeader(allItems);
+  const keyInfo = hdr
+    ? { key: hdr.key, mode: hdr.mode }
+    : detectKey(allItems);
+  const title = hdr?.title ?? detectTitle(allItems);
   const baseTitle = normTitle(title);
 
   // Trim trailing junk: blank lines, plus the CCLI/copyright footer and the
@@ -592,12 +632,15 @@ export async function parsePdfToSheets(
   let curTitle = "";
   for (const page of pages) {
     const items = mergeSuperscripts(page);
-    const t = normTitle(detectTitle(items));
+    const hdr = detectSongHeader(items);
+    const t = normTitle(hdr?.title ?? detectTitle(items));
+    // A page starts a new song when its title differs and it carries either a
+    // SongSelect masthead (Key-/CCLI) OR a plain "Name – (Key)" masthead.
     const startsNew =
       groups.length === 0 ||
       (!!t &&
         t !== curTitle &&
-        pageHasMasthead(items) &&
+        (pageHasMasthead(items) || !!hdr) &&
         pageHasSongContent(items));
     if (startsNew) {
       groups.push([page]);
