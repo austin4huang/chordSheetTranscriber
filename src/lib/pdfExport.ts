@@ -253,7 +253,7 @@ export async function exportRenderedPdf(
   let dataUrl: string;
   try {
     dataUrl = await toPng(node, {
-      pixelRatio: 2,
+      pixelRatio: 1.5,
       backgroundColor: "#ffffff",
       width: node.scrollWidth,
       height: node.scrollHeight,
@@ -346,7 +346,7 @@ async function renderSheetToPng(sheet: ChordSheet): Promise<string> {
     const node = container.firstElementChild as HTMLElement | null;
     if (!node) throw new Error("Off-screen sheet didn't mount");
     return await toPng(node, {
-      pixelRatio: 2,
+      pixelRatio: 1.5,
       backgroundColor: "#ffffff",
       width: node.scrollWidth,
       height: node.scrollHeight,
@@ -384,12 +384,19 @@ function paginateImageInto(
     const slice = document.createElement("canvas");
     slice.width = img.naturalWidth;
     slice.height = Math.max(1, Math.round(sliceH));
-    slice.getContext("2d")!.drawImage(src, 0, -yStart);
-    const url = slice.toDataURL("image/png");
+    // Fill white first so JPEG (no alpha) doesn't render any transparent
+    // pixels as black bands.
+    const sctx = slice.getContext("2d")!;
+    sctx.fillStyle = "#ffffff";
+    sctx.fillRect(0, 0, slice.width, slice.height);
+    sctx.drawImage(src, 0, -yStart);
+    // JPEG at 0.85 quality compresses chord-sheet pages (mostly white + text)
+    // ~5–10× smaller than PNG with no visible loss.
+    const url = slice.toDataURL("image/jpeg", 0.85);
     const drawH = sliceH * scale; // ≤ contentH
     if (startNewPage || i > 0) doc.addPage();
     startNewPage = true;
-    doc.addImage(url, "PNG", margin, margin, contentW, drawH);
+    doc.addImage(url, "JPEG", margin, margin, contentW, drawH);
   }
   return startNewPage;
 }

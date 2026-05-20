@@ -9,6 +9,7 @@ export interface SongSet {
   id: string;
   name: string;
   sheetIds: string[];
+  createdAt?: number;   // unset on legacy sets — fall back to updatedAt
   updatedAt: number;
 }
 
@@ -99,6 +100,31 @@ export function deleteSheet(id: string) {
     ...set,
     sheetIds: set.sheetIds.filter((sid) => sid !== id),
   }));
+  write(s);
+}
+
+/** Replace the sheet at `oldId` with `newSheet`: removes `oldId`, saves
+ *  `newSheet` (insert or update), and re-points any set references from
+ *  `oldId` to `newSheet.id`. Used by the duplicate-title "Replace" flow,
+ *  where the user merges their current edits into an existing sheet. */
+export function replaceSheet(oldId: string, newSheet: ChordSheet) {
+  const s = read();
+  s.sheets = s.sheets.filter((x) => x.id !== oldId);
+  const idx = s.sheets.findIndex((x) => x.id === newSheet.id);
+  const updated = { ...newSheet, updatedAt: Date.now() };
+  if (idx >= 0) s.sheets[idx] = updated;
+  else s.sheets.push(updated);
+  s.sets = (s.sets ?? []).map((set) => {
+    // Re-point references, then dedup in case the set already had both ids.
+    const mapped = set.sheetIds.map((sid) => (sid === oldId ? newSheet.id : sid));
+    const seen = new Set<string>();
+    const deduped = mapped.filter((sid) => {
+      if (seen.has(sid)) return false;
+      seen.add(sid);
+      return true;
+    });
+    return { ...set, sheetIds: deduped };
+  });
   write(s);
 }
 
@@ -237,4 +263,24 @@ export function emptySheetWithDefaults(): ChordSheet {
 /** createdAt with a legacy fallback (older sheets have no createdAt). */
 export function createdAtOf(s: ChordSheet): number {
   return s.createdAt ?? s.updatedAt;
+}
+
+export function createdAtOfSet(s: SongSet): number {
+  return s.createdAt ?? s.updatedAt;
+}
+
+/** Return a title that doesn't collide (case-insensitively) with `taken`.
+ *  Appends " (2)", " (3)", … Strips an existing trailing "(N)" first so a
+ *  re-conflict renumbers ("Foo (2)" → "Foo (3)") rather than nesting
+ *  ("Foo (2) (2)"). */
+export function nextUniqueTitle(base: string, taken: Set<string>): string {
+  const norm = (s: string) => s.toLowerCase();
+  const stripped = base.replace(/\s*\(\d+\)\s*$/, "").trim();
+  const root = stripped || base;
+  if (!taken.has(norm(root))) return root;
+  for (let n = 2; n < 1000; n++) {
+    const candidate = `${root} (${n})`;
+    if (!taken.has(norm(candidate))) return candidate;
+  }
+  return `${root} (${Date.now()})`;
 }

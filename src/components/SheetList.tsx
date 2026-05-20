@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChordSheet } from "../lib/types";
 import type { SongSet } from "../lib/storage";
+import type { AskConflict, ConflictAnswer } from "../App";
 import {
   listSheets, deleteSheet, saveSheet, emptySheetWithDefaults,
-  listSets, saveSet, deleteSet, createdAtOf,
+  listSets, saveSet, deleteSet, createdAtOf, createdAtOfSet,
+  nextUniqueTitle,
 } from "../lib/storage";
 import { parsePdfToSheets, extractEmbeddedPayload } from "../lib/pdfParser";
 import {
@@ -12,7 +14,7 @@ import {
 import { importChords, toChordSheet } from "../lib/chordImport";
 import {
   DownloadIcon, EditIcon, TrashIcon, PlusIcon, FileImportIcon, LinkIcon,
-  TextImportIcon,
+  TextImportIcon, PlayIcon, CheckIcon, XIcon, UploadIcon,
 } from "./icons";
 import {
   getStorageStatus, downloadBackup, restoreBackup, linkFolder,
@@ -22,9 +24,10 @@ import "./SheetList.css";
 
 interface Props {
   onOpen: (sheetId: string, setId?: string | null) => void;
+  askConflict: AskConflict;
 }
 
-export function SheetList({ onOpen }: Props) {
+export function SheetList({ onOpen, askConflict }: Props) {
   const [sheets, setSheets] = useState<ChordSheet[]>(() => listSheets());
   const [sets, setSets] = useState<SongSet[]>(() => listSets());
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -44,9 +47,13 @@ export function SheetList({ onOpen }: Props) {
   const [sortBy, setSortBy] = useState<"modified" | "title" | "created">(
     "modified",
   );
+  const [setsSortBy, setSetsSortBy] = useState<"created" | "title">("created");
   const [storageOpen, setStorageOpen] = useState(false);
   const [storageStatus, setStorageStatus] = useState<StorageStatus | null>(null);
   const [storageMsg, setStorageMsg] = useState<string | null>(null);
+  const [drag, setDrag] = useState<
+    { setId: string; from: number; over: number | null } | null
+  >(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const restoreRef = useRef<HTMLInputElement>(null);
 
@@ -131,6 +138,91 @@ export function SheetList({ onOpen }: Props) {
     onOpen(sheet.id);
   };
 
+  /** Save a batch of incoming sheets, prompting on duplicate titles. Returns
+   *  the saved sheet ids in input order (skipped songs absent), or null if
+   *  the user cancelled. Two-new-songs-share-a-title cases auto-suffix
+   *  silently — the conflict is created by this import itself. */
+  const importMany = async (
+    incoming: ChordSheet[],
+  ): Promise<ChordSheet[] | null> => {
+    const existing = listSheets();
+    const taken = new Set(existing.map((s) => s.title.toLowerCase()));
+    let sticky: ConflictAnswer["choice"] | null = null;
+    const saved: ChordSheet[] = [];
+
+    const remainingConflicts = (fromIdx: number) =>
+      incoming
+        .slice(fromIdx)
+        .filter((s) => taken.has(s.title.toLowerCase())).length;
+
+    for (let i = 0; i < incoming.length; i++) {
+      const candidate = incoming[i];
+      const titleKey = candidate.title.toLowerCase();
+      const match = existing.find((s) => s.title.toLowerCase() === titleKey);
+
+      if (match) {
+        let choice = sticky;
+        if (!choice) {
+          const ans = await askConflict({
+            title: candidate.title,
+            remaining: Math.max(0, remainingConflicts(i + 1)),
+          });
+          if (!ans) return null;
+          choice = ans.choice;
+          if (ans.applyToAll) sticky = ans.choice;
+        }
+        if (choice === "replace") {
+          // Preserve id + createdAt so existing set references still resolve.
+          const replaced: ChordSheet = {
+            ...candidate,
+            id: match.id,
+            createdAt: match.createdAt ?? Date.now(),
+            updatedAt: Date.now(),
+          };
+          saveSheet(replaced);
+          saved.push(replaced);
+          // Local mirror so later iterations see the new state.
+          const idx = existing.findIndex((s) => s.id === match.id);
+          existing[idx] = replaced;
+          continue;
+        }
+        // rename
+        const fresh = nextUniqueTitle(candidate.title, taken);
+        const renamed: ChordSheet = {
+          ...candidate,
+          id: crypto.randomUUID(),
+          title: fresh,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        saveSheet(renamed);
+        saved.push(renamed);
+        taken.add(renamed.title.toLowerCase());
+        existing.push(renamed);
+        continue;
+      }
+
+      // No library conflict; auto-suffix if a sibling in this same batch
+      // already claimed the title.
+      const finalTitle = taken.has(titleKey)
+        ? nextUniqueTitle(candidate.title, taken)
+        : candidate.title;
+      const fresh: ChordSheet = {
+        ...candidate,
+        id: crypto.randomUUID(),
+        title: finalTitle,
+        createdAt: candidate.createdAt ?? Date.now(),
+        updatedAt: Date.now(),
+      };
+      saveSheet(fresh);
+      saved.push(fresh);
+      taken.add(fresh.title.toLowerCase());
+      existing.push(fresh);
+    }
+
+    return saved;
+  };
+
   const onImport = async (file: File) => {
     setImporting(true);
     setImportError(null);
@@ -138,32 +230,19 @@ export function SheetList({ onOpen }: Props) {
       // Lossless path: a PDF this app exported carries its source data.
       const payload = await extractEmbeddedPayload(file);
       if (payload?.kind === "song") {
-        const sheet: ChordSheet = {
-          ...payload.sheet,
-          id: crypto.randomUUID(),
-          createdAt: payload.sheet.createdAt ?? Date.now(),
-          updatedAt: Date.now(),
-        };
-        saveSheet(sheet);
-        onOpen(sheet.id);
+        const saved = await importMany([payload.sheet as ChordSheet]);
+        if (!saved || saved.length === 0) return;
+        onOpen(saved[0].id);
         return;
       }
       if (payload?.kind === "set") {
-        const ids: string[] = [];
-        for (const s of payload.sheets) {
-          const sheet: ChordSheet = {
-            ...s,
-            id: crypto.randomUUID(),
-            createdAt: s.createdAt ?? Date.now(),
-            updatedAt: Date.now(),
-          };
-          saveSheet(sheet);
-          ids.push(sheet.id);
-        }
+        const saved = await importMany(payload.sheets as ChordSheet[]);
+        if (!saved) return;
         const newSet: SongSet = {
           id: crypto.randomUUID(),
           name: payload.name || file.name.replace(/\.pdf$/i, ""),
-          sheetIds: ids,
+          sheetIds: saved.map((s) => s.id),
+          createdAt: Date.now(),
           updatedAt: Date.now(),
         };
         saveSet(newSet);
@@ -185,22 +264,20 @@ export function SheetList({ onOpen }: Props) {
       }
 
       const fallbackName = file.name.replace(/\.pdf$/i, "");
-      const made = songs.map((p, i) => {
-        const sheet: ChordSheet = {
-          id: crypto.randomUUID(),
-          title: p.title || `${fallbackName}${songs.length > 1 ? ` (${i + 1})` : ""}`,
-          key: p.key || "C",
-          mode: p.mode || "major",
-          lines: p.lines || [],
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
-        saveSheet(sheet);
-        return sheet;
-      });
+      const incoming: ChordSheet[] = songs.map((p, i) => ({
+        id: crypto.randomUUID(),
+        title: p.title || `${fallbackName}${songs.length > 1 ? ` (${i + 1})` : ""}`,
+        key: p.key || "C",
+        mode: p.mode || "major",
+        lines: p.lines || [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }));
+      const saved = await importMany(incoming);
+      if (!saved || saved.length === 0) return;
 
-      if (made.length === 1) {
-        onOpen(made[0].id);
+      if (saved.length === 1) {
+        onOpen(saved[0].id);
         return;
       }
 
@@ -208,13 +285,14 @@ export function SheetList({ onOpen }: Props) {
       const newSet: SongSet = {
         id: crypto.randomUUID(),
         name: fallbackName,
-        sheetIds: made.map((s) => s.id),
+        sheetIds: saved.map((s) => s.id),
+        createdAt: Date.now(),
         updatedAt: Date.now(),
       };
       saveSet(newSet);
       refresh();
       setExpanded(newSet.id);
-      onOpen(made[0].id, newSet.id);
+      onOpen(saved[0].id, newSet.id);
     } catch (e) {
       console.error(e);
       setImportError(
@@ -231,10 +309,11 @@ export function SheetList({ onOpen }: Props) {
     try {
       const imported = await importChords(urlText);
       const sheet = toChordSheet(imported);
-      saveSheet(sheet);
+      const saved = await importMany([sheet]);
+      if (!saved || saved.length === 0) return;
       setUrlText("");
       setImportMode(null);
-      onOpen(sheet.id);
+      onOpen(saved[0].id);
     } catch (e) {
       setImportError(
         e instanceof Error ? e.message : "Couldn't import from that input.",
@@ -257,6 +336,7 @@ export function SheetList({ onOpen }: Props) {
       id: crypto.randomUUID(),
       name,
       sheetIds: [],
+      createdAt: Date.now(),
       updatedAt: Date.now(),
     };
     saveSet(set);
@@ -288,11 +368,12 @@ export function SheetList({ onOpen }: Props) {
     setSets(listSets());
   };
 
-  const moveInSet = (set: SongSet, i: number, dir: -1 | 1) => {
-    const j = i + dir;
-    if (j < 0 || j >= set.sheetIds.length) return;
+  const reorderInSet = (set: SongSet, from: number, to: number) => {
+    if (from === to || from < 0 || to < 0 || from >= set.sheetIds.length) return;
     const ids = [...set.sheetIds];
-    [ids[i], ids[j]] = [ids[j], ids[i]];
+    const [moved] = ids.splice(from, 1);
+    const insertAt = to > from ? to - 1 : to;
+    ids.splice(insertAt, 0, moved);
     updateSetSheets(set, ids);
   };
 
@@ -317,11 +398,24 @@ export function SheetList({ onOpen }: Props) {
   const visibleSheets = sortSheets(
     q ? sheets.filter((s) => matches(s.title) || matches(s.artist)) : sheets,
   );
-  const visibleSets = q
-    ? sets.filter(
-        (set) => matches(set.name) || set.sheetIds.some((id) => matches(titleOf(id))),
-      )
-    : sets;
+  const sortSets = (list: SongSet[]) => {
+    const arr = [...list];
+    if (setsSortBy === "title") {
+      arr.sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+      );
+    } else {
+      arr.sort((a, b) => createdAtOfSet(b) - createdAtOfSet(a));
+    }
+    return arr;
+  };
+  const visibleSets = sortSets(
+    q
+      ? sets.filter(
+          (set) => matches(set.name) || set.sheetIds.some((id) => matches(titleOf(id))),
+        )
+      : sets,
+  );
 
   return (
     <div className="list-page">
@@ -455,8 +549,13 @@ export function SheetList({ onOpen }: Props) {
           <div className="storage-row">
             <strong>Storage &amp; backup</strong>
             <span className="spacer" />
-            <button className="ghost-btn" onClick={() => setStorageOpen(false)}>
-              Close
+            <button
+              className="icon-btn"
+              onClick={() => setStorageOpen(false)}
+              title="Close"
+              aria-label="Close storage panel"
+            >
+              <XIcon />
             </button>
           </div>
           <p className="storage-status">
@@ -466,14 +565,19 @@ export function SheetList({ onOpen }: Props) {
           </p>
 
           <div className="storage-row">
-            <button className="ghost-btn" onClick={downloadBackup}>
-              ⭳ Save backup (.json)
+            <button
+              className="ghost-btn"
+              onClick={downloadBackup}
+              title="Save a .json backup of your library"
+            >
+              <DownloadIcon />Backup
             </button>
             <button
               className="ghost-btn"
               onClick={() => restoreRef.current?.click()}
+              title="Restore library from a .json backup"
             >
-              Restore from backup…
+              <UploadIcon />Restore
             </button>
           </div>
 
@@ -556,13 +660,15 @@ export function SheetList({ onOpen }: Props) {
             <span className="spacer" />
             <button
               type="button"
-              className="ghost-btn"
+              className="icon-btn"
+              title="Cancel"
+              aria-label="Cancel import"
               onClick={() => {
                 setImportMode(null);
                 setUrlText("");
               }}
             >
-              Cancel
+              <XIcon />
             </button>
             <button
               type="submit"
@@ -611,10 +717,27 @@ export function SheetList({ onOpen }: Props) {
         <div className="section-head">
           <h2>Sets</h2>
           {!creatingSet && (
-            <button className="ghost-btn" onClick={() => setCreatingSet(true)}>
-              + New set
+            <button
+              className="ghost-btn new-set-btn"
+              onClick={() => setCreatingSet(true)}
+              title="New set"
+            >
+              <PlusIcon />New set
             </button>
           )}
+          <label className="sort-control">
+            Sort:
+            <select
+              value={setsSortBy}
+              onChange={(e) =>
+                setSetsSortBy(e.target.value as "created" | "title")
+              }
+              aria-label="Sort sets"
+            >
+              <option value="created">Date created</option>
+              <option value="title">Alphabetical</option>
+            </select>
+          </label>
         </div>
         {creatingSet && (
           <form
@@ -635,11 +758,22 @@ export function SheetList({ onOpen }: Props) {
                 if (e.key === "Escape") cancelNewSet();
               }}
             />
-            <button type="submit" className="primary" disabled={!newSetName.trim()}>
-              Create
+            <button
+              type="submit"
+              className="primary"
+              disabled={!newSetName.trim()}
+              title="Create set"
+            >
+              <CheckIcon />Create
             </button>
-            <button type="button" className="ghost-btn" onClick={cancelNewSet}>
-              Cancel
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={cancelNewSet}
+              title="Cancel"
+              aria-label="Cancel"
+            >
+              <XIcon />
             </button>
           </form>
         )}
@@ -674,11 +808,23 @@ export function SheetList({ onOpen }: Props) {
                           }}
                           aria-label="Set name"
                         />
-                        <button type="submit" className="primary" disabled={!renameText.trim()}>
-                          Save
+                        <button
+                          type="submit"
+                          className="primary"
+                          disabled={!renameText.trim()}
+                          title="Save"
+                          aria-label="Save"
+                        >
+                          <CheckIcon />
                         </button>
-                        <button type="button" className="ghost-btn" onClick={cancelRename}>
-                          Cancel
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          onClick={cancelRename}
+                          title="Cancel"
+                          aria-label="Cancel"
+                        >
+                          <XIcon />
                         </button>
                       </form>
                     ) : (
@@ -706,10 +852,12 @@ export function SheetList({ onOpen }: Props) {
                     )}
                     {set.sheetIds.length > 0 && (
                       <button
-                        className="ghost-btn"
+                        className="ghost-btn set-open-btn"
                         onClick={() => onOpen(set.sheetIds[0], set.id)}
+                        title="Open set"
+                        aria-label="Open set"
                       >
-                        ▶ Open set
+                        <PlayIcon />
                       </button>
                     )}
                     {set.sheetIds.length > 0 && (
@@ -744,23 +892,75 @@ export function SheetList({ onOpen }: Props) {
                           Empty — add a song below.
                         </li>
                       )}
-                      {set.sheetIds.map((sid, i) => (
-                        <li key={sid + i} className="set-song">
-                          <button className="set-song-open" onClick={() => onOpen(sid, set.id)}>
-                            {i + 1}. {titleOf(sid)}
-                          </button>
-                          <span className="set-song-actions">
-                            <button onClick={() => moveInSet(set, i, -1)} disabled={i === 0} aria-label="Move up">↑</button>
-                            <button onClick={() => moveInSet(set, i, 1)} disabled={i === set.sheetIds.length - 1} aria-label="Move down">↓</button>
-                            <button
-                              onClick={() => updateSetSheets(set, set.sheetIds.filter((_, k) => k !== i))}
-                              aria-label="Remove from set"
+                      {set.sheetIds.map((sid, i) => {
+                        const isDragging =
+                          drag?.setId === set.id && drag.from === i;
+                        const isOver =
+                          drag?.setId === set.id &&
+                          drag.over === i &&
+                          drag.from !== i;
+                        const dropBefore =
+                          isOver && (drag!.from > i);
+                        const dropAfter =
+                          isOver && (drag!.from < i);
+                        return (
+                          <li
+                            key={sid + i}
+                            className={
+                              "set-song" +
+                              (isDragging ? " set-song-dragging" : "") +
+                              (dropBefore ? " set-song-drop-before" : "") +
+                              (dropAfter ? " set-song-drop-after" : "")
+                            }
+                            draggable
+                            onDragStart={(e) => {
+                              setDrag({ setId: set.id, from: i, over: i });
+                              e.dataTransfer.effectAllowed = "move";
+                              try {
+                                e.dataTransfer.setData("text/plain", sid);
+                              } catch {
+                                // Safari can throw on certain MIME types — safe to ignore.
+                              }
+                            }}
+                            onDragOver={(e) => {
+                              if (!drag || drag.setId !== set.id) return;
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = "move";
+                              if (drag.over !== i) {
+                                setDrag({ ...drag, over: i });
+                              }
+                            }}
+                            onDrop={(e) => {
+                              if (!drag || drag.setId !== set.id) return;
+                              e.preventDefault();
+                              const from = drag.from;
+                              const to = from < i ? i + 1 : i;
+                              reorderInSet(set, from, to);
+                              setDrag(null);
+                            }}
+                            onDragEnd={() => setDrag(null)}
+                          >
+                            <span
+                              className="set-song-grip"
+                              aria-hidden="true"
+                              title="Drag to reorder"
                             >
-                              ✕
+                              ⋮⋮
+                            </span>
+                            <button className="set-song-open" onClick={() => onOpen(sid, set.id)}>
+                              {i + 1}. {titleOf(sid)}
                             </button>
-                          </span>
-                        </li>
-                      ))}
+                            <span className="set-song-actions">
+                              <button
+                                onClick={() => updateSetSheets(set, set.sheetIds.filter((_, k) => k !== i))}
+                                aria-label="Remove from set"
+                              >
+                                ✕
+                              </button>
+                            </span>
+                          </li>
+                        );
+                      })}
                       <li className="set-add">
                         <AddSongPicker
                           sheets={sheets.filter(
@@ -834,11 +1034,23 @@ export function SheetList({ onOpen }: Props) {
                       }}
                       aria-label="Song title"
                     />
-                    <button type="submit" className="primary" disabled={!renameText.trim()}>
-                      Save
+                    <button
+                      type="submit"
+                      className="primary"
+                      disabled={!renameText.trim()}
+                      title="Save"
+                      aria-label="Save"
+                    >
+                      <CheckIcon />
                     </button>
-                    <button type="button" className="ghost-btn" onClick={cancelRename}>
-                      Cancel
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      onClick={cancelRename}
+                      title="Cancel"
+                      aria-label="Cancel"
+                    >
+                      <XIcon />
                     </button>
                   </form>
                 ) : (
@@ -886,7 +1098,7 @@ export function SheetList({ onOpen }: Props) {
                     }}
                     title="Add to set"
                   >
-                    <option value="">+ Set…</option>
+                    <option value="">+ Set</option>
                     {sets.map((set) => (
                       <option key={set.id} value={set.id}>{set.name}</option>
                     ))}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import type { Stroke, TextNote } from "../lib/types";
 import "./AnnotationLayer.css";
 
@@ -21,6 +22,10 @@ interface Props {
    *  and seeds it via `onRefSize` the first time something is authored. */
   refSize?: { w: number; h: number } | null;
   onRefSize?: (ref: { w: number; h: number }) => void;
+  /** Lifted so the user's minimize choice survives switching songs in a set
+   *  (this component remounts on song change). Falls back to local state. */
+  collapsed?: boolean;
+  onCollapsedChange?: Dispatch<SetStateAction<boolean>>;
 }
 
 const CursorIcon = (
@@ -287,6 +292,8 @@ export function AnnotationLayer({
   onTextsChange,
   refSize,
   onRefSize,
+  collapsed: collapsedProp,
+  onCollapsedChange,
 }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -302,7 +309,10 @@ export function AnnotationLayer({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Stroke | null>(null);
   const drawing = useRef(false);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsedLocal, setCollapsedLocal] = useState(false);
+  const collapsed = collapsedProp ?? collapsedLocal;
+  const setCollapsed: Dispatch<SetStateAction<boolean>> =
+    onCollapsedChange ?? setCollapsedLocal;
   const [pos, setPos] = useState({ dx: 0, dy: 0 });
   const gripDrag = useRef<{ x: number; y: number; dx: number; dy: number } | null>(null);
 

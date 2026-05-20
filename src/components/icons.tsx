@@ -119,3 +119,74 @@ export function TextImportIcon({ size = 16 }: { size?: number }) {
     </svg>
   );
 }
+
+/** Left-pointing arrow — the "back" action. */
+export function ArrowLeftIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} {...baseIcon}>
+      <path d="M19 12H5" />
+      <path d="M12 19l-7-7 7-7" />
+    </svg>
+  );
+}
+
+/** Right-pointing triangle — the "play / open set" action. */
+export function PlayIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} {...baseIcon} fill="currentColor" stroke="none">
+      <path d="M7 4v16l13-8z" />
+    </svg>
+  );
+}
+
+/** Checkmark — the "save / confirm" action. */
+export function CheckIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} {...baseIcon}>
+      <path d="M5 12l4 4L19 7" />
+    </svg>
+  );
+}
+
+/** X — the "cancel / close / dismiss" action. */
+export function XIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} {...baseIcon}>
+      <path d="M6 6l12 12M18 6L6 18" />
+    </svg>
+  );
+}
+
+/** Up-arrow rising from a tray — the "restore / upload" action. */
+export function UploadIcon({ size = 15 }: { size?: number }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={{ verticalAlign: "-2px", marginRight: "0.35em" }}
+    >
+      <path d="M12 21V10" />
+      <path d="M8 14l4-4 4 4" />
+      <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
+    </svg>
+  );
+}
+
+/** Corner brackets — the "present full screen" action. */
+export function PresentIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} {...baseIcon} style={{ verticalAlign: "-3px" }}>
+      <path d="M4 9V5a1 1 0 0 1 1-1h4" />
+      <path d="M20 9V5a1 1 0 0 0-1-1h-4" />
+      <path d="M4 15v4a1 1 0 0 0 1 1h4" />
+      <path d="M20 15v4a1 1 0 0 1-1 1h-4" />
+    </svg>
+  );
+}

@@ -8,11 +8,15 @@ import {
   type SetStateAction,
 } from "react";
 import type { ChordSheet, Stroke, TextNote } from "../lib/types";
-import { linesToText, textToSheet, saveSheet, updateSheet } from "../lib/storage";
+import {
+  linesToText, textToSheet, saveSheet, updateSheet, listSheets,
+  nextUniqueTitle, replaceSheet,
+} from "../lib/storage";
+import type { AskConflict } from "../App";
 import { noteToPitchClass, keyPrefersFlats } from "../lib/nashville";
 import { SheetRenderer } from "./SheetRenderer";
 import { exportSongRenderedPdf } from "../lib/pdfExport";
-import { DownloadIcon } from "./icons";
+import { DownloadIcon, ArrowLeftIcon, XIcon, PresentIcon } from "./icons";
 import "./SheetEditor.css";
 
 // Chromatic note names by pitch class, in both spellings. Enharmonic keys
@@ -66,6 +70,9 @@ interface Props {
   onPresentingChange: Dispatch<SetStateAction<boolean>>;
   split: number;
   onSplitChange: Dispatch<SetStateAction<number>>;
+  annoToolbarCollapsed: boolean;
+  onAnnoToolbarCollapsedChange: Dispatch<SetStateAction<boolean>>;
+  askConflict: AskConflict;
 }
 
 export function SheetEditor({
@@ -81,6 +88,9 @@ export function SheetEditor({
   onPresentingChange,
   split,
   onSplitChange,
+  annoToolbarCollapsed,
+  onAnnoToolbarCollapsedChange,
+  askConflict,
 }: Props) {
   const [text, setText] = useState(() => linesToText(initial));
   // Text as of the last save, for dirty-tracking and the Save button state.
@@ -224,8 +234,8 @@ export function SheetEditor({
     updateSheet(initial.id, { displayKey, preferFlats });
   }, [displayKey, preferFlats, initial.id]);
 
-  const onSave = () => {
-    const toSave = {
+  const onSave = async () => {
+    let toSave: ChordSheet = {
       ...sheet,
       annotations,
       texts,
@@ -234,6 +244,54 @@ export function SheetEditor({
       preferFlats,
       updatedAt: Date.now(),
     };
+
+    // Duplicate-title check (case-insensitive, against every other sheet).
+    const others = listSheets().filter((s) => s.id !== toSave.id);
+    const titleKey = toSave.title.toLowerCase();
+    const match = others.find((s) => s.title.toLowerCase() === titleKey);
+    if (match) {
+      const ans = await askConflict({ title: toSave.title, remaining: 0 });
+      if (!ans) return; // user cancelled the save
+      if (ans.choice === "replace") {
+        // Merge current edits into the existing sheet's slot. Keeps its id
+        // and createdAt so set references still resolve, then drops this
+        // sheet's id. The editor remounts on the new id via App's `key`.
+        const merged: ChordSheet = {
+          ...toSave,
+          id: match.id,
+          createdAt: match.createdAt ?? Date.now(),
+        };
+        replaceSheet(toSave.id, merged);
+        setSavedText(text);
+        setSavedAnno(annoKey);
+        setJustSaved(true);
+        if (saveTimer.current) clearTimeout(saveTimer.current);
+        saveTimer.current = window.setTimeout(() => setJustSaved(false), 1800);
+        onSaved(merged);
+        return;
+      }
+      // rename: auto-suffix this sheet's title and rewrite the editor text
+      // so the {title:} directive matches what's on disk. Swap just the
+      // directive line if one exists (preserves the user's other formatting);
+      // otherwise rebuild the text from the parsed sheet.
+      const taken = new Set(others.map((s) => s.title.toLowerCase()));
+      const fresh = nextUniqueTitle(toSave.title, taken);
+      toSave = { ...toSave, title: fresh };
+      const titleRe = /^\{title:\s*[^}]*\}\s*$/m;
+      const freshText = titleRe.test(text)
+        ? text.replace(titleRe, `{title: ${fresh}}`)
+        : linesToText(toSave);
+      setText(freshText);
+      setSavedText(freshText);
+      saveSheet(toSave);
+      setSavedAnno(annoKey);
+      setJustSaved(true);
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      saveTimer.current = window.setTimeout(() => setJustSaved(false), 1800);
+      onSaved(toSave);
+      return;
+    }
+
     saveSheet(toSave);
     setSavedText(text);
     setSavedAnno(annoKey);
@@ -319,15 +377,8 @@ export function SheetEditor({
       <div className="editor-toolbar">
         <div className="tb-left">
         <div className="tb-group">
-          <button onClick={onBack}>← Back</button>
-          <button
-            className={`tb-toggle-btn${editorHidden ? "" : " active"}`}
-            onClick={() => setEditorHidden((h) => !h)}
-            aria-pressed={!editorHidden}
-            title={editorHidden ? "Show the editor" : "Hide the editor (preview only)"}
-          >
-            <span className="tb-toggle-icon" aria-hidden="true">◧</span>
-            Editor
+          <button onClick={onBack} title="Back to library" aria-label="Back">
+            <ArrowLeftIcon />Back
           </button>
         </div>
         <div className="tb-title">{sheet.title}</div>
@@ -381,7 +432,7 @@ export function SheetEditor({
             aria-label="Present"
             title="Present full screen (Esc to exit)"
           >
-            ⛶
+            <PresentIcon />
           </button>
         </div>
         </div>
@@ -513,9 +564,32 @@ export function SheetEditor({
           onDoubleClick={resetSplit}
           title="Drag to resize · double-click to reset"
         >
-          <span className="editor-resizer-grip" />
+          <button
+            type="button"
+            className="editor-resizer-collapse"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              setEditorHidden(true);
+            }}
+            aria-label="Hide the editor"
+            title="Hide the editor"
+          >
+            ‹
+          </button>
         </div>
         </>
+        )}
+        {editorHidden && (
+          <button
+            type="button"
+            className="editor-peek"
+            onClick={() => setEditorHidden(false)}
+            aria-label="Show the editor"
+            title="Show the editor"
+          >
+            ›
+          </button>
         )}
         <div className="editor-pane">
           <h3>Preview</h3>
@@ -529,6 +603,8 @@ export function SheetEditor({
             onTextsChange={setTexts}
             annoRef={annoRef ?? null}
             onAnnoRefChange={setAnnoRef}
+            annoToolbarCollapsed={annoToolbarCollapsed}
+            onAnnoToolbarCollapsedChange={onAnnoToolbarCollapsedChange}
             rootRef={renderRef}
           />
         </div>
@@ -541,7 +617,7 @@ export function SheetEditor({
             title="Exit full screen (Esc)"
             aria-label="Exit full screen"
           >
-            ✕ Exit
+            <XIcon />
           </button>
           {setNav && (
             <div className="present-setnav">
@@ -575,6 +651,8 @@ export function SheetEditor({
               onTextsChange={setTexts}
               annoRef={annoRef ?? null}
               onAnnoRefChange={setAnnoRef}
+              annoToolbarCollapsed={annoToolbarCollapsed}
+              onAnnoToolbarCollapsedChange={onAnnoToolbarCollapsedChange}
             />
           </div>
         </div>

@@ -123,30 +123,6 @@
   opacity: 1;
 }
 
-/* Editor show/hide toggle: reads as "panel on/off" — highlighted when the
-   editor pane is visible, muted when collapsed. */
-.editor-toolbar .tb-toggle-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  background: #333;
-  border-color: #4a4a4a;
-  color: #cfcfcf;
-}
-.editor-toolbar .tb-toggle-btn .tb-toggle-icon {
-  font-size: 1rem;
-  line-height: 1;
-  color: #7a7a7a;
-  transition: color 0.12s;
-}
-.editor-toolbar .tb-toggle-btn.active {
-  background: #2f4368;
-  border-color: #3a5a92;
-  color: #fff;
-}
-.editor-toolbar .tb-toggle-btn.active .tb-toggle-icon { color: #6fa8ff; }
-.editor-toolbar .tb-toggle-btn:hover { filter: brightness(1.12); }
-
 /* Square icon-only button (Present). */
 .editor-toolbar .tb-icon-btn {
   padding: 0.42rem 0.6rem;
@@ -268,6 +244,8 @@
   overflow: hidden;
   flex: 1;
   background: #f4f5f7;
+  /* Positioning context for the .editor-peek tab. */
+  position: relative;
 }
 .editor-pane {
   display: flex;
@@ -291,16 +269,58 @@
   cursor: col-resize;
   touch-action: none;
 }
-.editor-resizer-grip {
-  width: 4px;
+/* Chevron button in the middle of the divider — click to collapse the editor
+   pane. Drag (anywhere on the bar) still resizes; the button stops its own
+   pointer-down so a click never starts a drag. */
+.editor-resizer-collapse {
+  width: 14px;
   height: 44px;
-  border-radius: 2px;
+  border-radius: 3px;
   background: #c4c8d0;
-  transition: background 0.15s;
+  color: #fff;
+  border: none;
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
 }
-.editor-resizer:hover .editor-resizer-grip,
-.editor-resizer:active .editor-resizer-grip {
+.editor-resizer:hover .editor-resizer-collapse,
+.editor-resizer-collapse:hover {
   background: #2a6cdc;
+}
+
+/* Translucent tab peeking out from the left edge when the editor is hidden.
+   Click to bring the editor back. Fades to fully opaque on hover. */
+.editor-peek {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 64px;
+  padding: 0;
+  border: 1px solid rgba(42, 108, 220, 0.3);
+  border-left: none;
+  border-radius: 0 6px 6px 0;
+  background: rgba(42, 108, 220, 0.18);
+  color: #2a6cdc;
+  font-size: 1.15rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 5;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.editor-peek:hover {
+  background: #2a6cdc;
+  border-color: #2a6cdc;
+  color: #fff;
 }
 .editor-pane h3 {
   margin: 0 0 0.4rem;
@@ -352,15 +372,19 @@
   top: 0.9rem;
   right: 1.1rem;
   z-index: 1001;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: rgba(0, 0, 0, 0.05);
   color: #555;
   border: 1px solid #dcdcdc;
-  padding: 0.4rem 0.85rem;
+  padding: 0.4rem 0.55rem;
   border-radius: 6px;
-  font-size: 0.85rem;
+  line-height: 0;
   cursor: pointer;
   opacity: 0.45;
   transition: opacity 0.15s;
 }
+.present-exit svg { margin-right: 0 !important; }
 .present-exit:hover,
 .present-exit:focus-visible { opacity: 1; }

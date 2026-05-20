@@ -1,4 +1,4 @@
-import type { ReactNode, Ref } from "react";
+import type { Dispatch, ReactNode, Ref, SetStateAction } from "react";
 import type { ChordSheet, SheetLine, Stroke, TextNote } from "../lib/types";
 import { chordToNumber, transposeChord } from "../lib/nashville";
 import { AnnotationLayer } from "./AnnotationLayer";
@@ -17,6 +17,10 @@ interface Props {
    *  size. The first authored annotation seeds it via `onAnnoRefChange`. */
   annoRef?: { w: number; h: number } | null;
   onAnnoRefChange?: (ref: { w: number; h: number }) => void;
+  /** Lifted to the App so the user's minimize choice survives switching
+   *  between songs in a set (this tree remounts on song change). */
+  annoToolbarCollapsed?: boolean;
+  onAnnoToolbarCollapsedChange?: Dispatch<SetStateAction<boolean>>;
   /** Attached to the .sheet-render box so it can be rasterized for export. */
   rootRef?: Ref<HTMLDivElement>;
 }
@@ -152,6 +156,8 @@ export function SheetRenderer({
   onTextsChange,
   annoRef,
   onAnnoRefChange,
+  annoToolbarCollapsed,
+  onAnnoToolbarCollapsedChange,
   rootRef,
 }: Props) {
   const ctx: XformCtx = {
@@ -170,6 +176,8 @@ export function SheetRenderer({
           onTextsChange={onTextsChange}
           refSize={annoRef ?? null}
           onRefSize={onAnnoRefChange}
+          collapsed={annoToolbarCollapsed}
+          onCollapsedChange={onAnnoToolbarCollapsedChange}
         />
       )}
       <header className="sr-header">

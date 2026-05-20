@@ -584,7 +584,11 @@ function pagesToSheet(pages: Item[][]): Partial<ChordSheet> {
   const keyInfo = hdr
     ? { key: hdr.key, mode: hdr.mode }
     : detectKey(allItems);
-  const title = hdr?.title ?? detectTitle(allItems);
+  // Strip the "- N" page-suffix SongSelect repeats on continuation pages
+  // ("Praise The Lord Forever - 2") in case the topmost-y item lands on a
+  // later page rather than page 1.
+  const rawTitle = hdr?.title ?? detectTitle(allItems);
+  const title = rawTitle ? stripPageSuffix(rawTitle).trim() : rawTitle;
   const baseTitle = normTitle(title);
 
   // Trim trailing junk: blank lines, plus the CCLI/copyright footer and the
