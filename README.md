@@ -6,6 +6,22 @@ Built with React + TypeScript + Vite. No server, no account: your library
 lives in your browser (with optional auto-save to a device folder on Chromium
 browsers, plus `.json` backup/restore everywhere).
 
+![Library: sets and all songs](docs/screenshots/library.png)
+
+The library: songs on the right, sets (ordered groups of songs) on the left,
+single search across both.
+
+![Editor: ChordPro source with live rendered preview](docs/screenshots/editor.png)
+
+Editor view — ChordPro source on the left, live preview on the right.
+Transpose, switch to Nashville numbers, and annotate (pen / text / colors)
+from the toolbar.
+
+![Present mode: full-screen with set navigation](docs/screenshots/present.png)
+
+Present mode — full-screen, distraction-free, with prev/next navigation
+when you opened the song from a set.
+
 ## Features
 
 - **Import** chord sheets from several sources:
