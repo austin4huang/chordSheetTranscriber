@@ -46,6 +46,17 @@
   border-color: #2a6cdc;
   color: #fff;
 }
+.anno-toolbar .anno-btn.is-confirming {
+  background: #d9342b;
+  border-color: #d9342b;
+  color: #fff;
+  animation: anno-pulse 1s ease-in-out infinite;
+}
+.anno-toolbar .anno-btn.is-confirming:hover:not(:disabled) { background: #c12c25; }
+@keyframes anno-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(217, 52, 43, 0.45); }
+  50%      { box-shadow: 0 0 0 4px rgba(217, 52, 43, 0); }
+}
 .anno-fontsize {
   display: inline-flex;
   align-items: center;
@@ -68,6 +79,11 @@
 }
 .anno-textbox.is-move,
 .anno-textbox.is-move .anno-text { cursor: move; }
+.anno-textbox.is-selected {
+  outline: 2px solid rgba(42, 108, 220, 0.7);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
 .anno-text {
   display: block;
   width: 100%;
@@ -87,18 +103,7 @@
   white-space: pre;
   resize: none;
 }
-/* Hidden twin used only to measure the text's true extent. */
-.anno-mirror {
-  position: absolute;
-  left: -9999px;
-  top: 0;
-  width: auto;
-  height: auto;
-  overflow: visible;
-  visibility: hidden;
-  pointer-events: none;
-}
-.anno-textbox:hover .anno-text:not(.anno-mirror) { border-color: #b9c3d6; }
+.anno-textbox:hover .anno-text { border-color: #b9c3d6; }
 .anno-text:focus {
   outline: none;
   border-color: #2a6cdc;

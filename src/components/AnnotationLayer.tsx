@@ -80,6 +80,7 @@ const TrashIcon = (
 interface TextBoxProps {
   note: TextNote;
   editing: boolean;
+  selected: boolean;
   eraser: boolean;
   move: boolean;
   pointerEvents: "auto" | "none";
@@ -87,24 +88,31 @@ interface TextBoxProps {
    *  that line's current position on resize/reflow. */
   offsetX: number;
   offsetY: number;
-  /** Screen-px → reference-space divisors for move/resize deltas. */
+  /** Screen-px → reference-space divisors for resize deltas. (Selection
+   *  drag is handled by the parent so it uses host-pixel deltas.) */
   scaleX: number;
   scaleY: number;
   onText: (text: string) => void;
   onResize: (w?: number, h?: number) => void;
-  onMove: (x: number, y: number) => void;
   onEdit: () => void;
   /** Double-click shortcut: switch to the Text tool and start editing this
    *  box. */
   onActivateText: () => void;
   onErase: () => void;
   onBlur: () => void;
+  onEscape: () => void;
+  /** Pointer-down/move/up forwarded to the parent so the same drag system
+   *  handles both stroke and text-box selection/group-move. */
+  onSelectDown: (id: string, clientX: number, clientY: number, modifier: boolean) => void;
+  onSelectMove: (clientX: number, clientY: number) => void;
+  onSelectUp: () => void;
 }
 
 function TextBox({
-  note, editing, eraser, move, pointerEvents,
+  note, editing, selected, eraser, move, pointerEvents,
   offsetX, offsetY, scaleX, scaleY,
-  onText, onResize, onMove, onEdit, onActivateText, onErase, onBlur,
+  onText, onResize, onEdit, onActivateText, onErase, onBlur, onEscape,
+  onSelectDown, onSelectMove, onSelectUp,
 }: TextBoxProps) {
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   // Focus the textarea whenever this box becomes the editing target (e.g.
@@ -114,19 +122,31 @@ function TextBox({
     if (editing) textAreaRef.current?.focus();
   }, [editing]);
   const boxRef = useRef<HTMLDivElement>(null);
-  const mirrorRef = useRef<HTMLDivElement>(null);
   const min = useRef({ w: 0, h: 0 });
   const drag = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
 
-  // Measure the text's true extent via a hidden mirror (a textarea has a
-  // default intrinsic width and never shrinks to its content), so the box's
-  // minimum size is exactly the text.
+  // Size the box to exactly fit the textarea's content. We can't use a
+  // separate <div> mirror because <div> and <textarea> measure text
+  // slightly differently (different internal padding, caret reservation,
+  // font metrics) — the discrepancy is small but consistently clips text
+  // by a few pixels. Instead we collapse the box to 0×0, read the
+  // textarea's own scrollWidth/scrollHeight (which report the natural
+  // content extent regardless of overflow), then restore. useLayoutEffect
+  // runs synchronously before paint so the 0-state is never visible.
   useLayoutEffect(() => {
     const box = boxRef.current;
-    const mirror = mirrorRef.current;
-    if (!box || !mirror) return;
-    const cw = mirror.offsetWidth + 2; // +2 for the caret
-    const ch = mirror.offsetHeight;
+    const ta = textAreaRef.current;
+    if (!box || !ta) return;
+    const prevW = box.style.width;
+    const prevH = box.style.height;
+    box.style.width = "0px";
+    box.style.height = "0px";
+    // scrollWidth already includes the textarea's own padding; +4 covers
+    // the 2px border on each side plus a couple px of caret slack.
+    const cw = ta.scrollWidth + 4;
+    const ch = ta.scrollHeight + 2;
+    box.style.width = prevW;
+    box.style.height = prevH;
     min.current = { w: cw, h: ch };
     const w = note.w != null ? Math.max(note.w, cw) : cw;
     const h = note.h != null ? Math.max(note.h, ch) : ch;
@@ -165,7 +185,7 @@ function TextBox({
   };
 
   // Drag the whole box to reposition it (cursor-mode).
-  const moveDrag = useRef<{ x: number; y: number; nx: number; ny: number } | null>(null);
+  const dragActive = useRef(false);
   // Manual double-click detection — `e.detail` on PointerEvent isn't reliable
   // across browsers and breaks after pointer-capture, so we just compare
   // timestamps + positions ourselves. ~450 ms / ~14 px is comfortable.
@@ -191,39 +211,31 @@ function TextBox({
     e.preventDefault();
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
-    moveDrag.current = { x: e.clientX, y: e.clientY, nx: note.x, ny: note.y };
+    dragActive.current = true;
+    const modifier = e.shiftKey || e.metaKey || e.ctrlKey;
+    onSelectDown(note.id, e.clientX, e.clientY, modifier);
   };
   const onBoxMove = (e: React.PointerEvent) => {
-    if (!moveDrag.current) return;
-    onMove(
-      moveDrag.current.nx + (e.clientX - moveDrag.current.x) / scaleX,
-      moveDrag.current.ny + (e.clientY - moveDrag.current.y) / scaleY,
-    );
+    if (!dragActive.current) return;
+    onSelectMove(e.clientX, e.clientY);
   };
   const onBoxUp = (e: React.PointerEvent) => {
-    if (!moveDrag.current) return;
+    if (!dragActive.current) return;
     e.currentTarget.releasePointerCapture(e.pointerId);
-    moveDrag.current = null;
+    dragActive.current = false;
+    onSelectUp();
   };
 
   return (
     <div
       ref={boxRef}
-      className={`anno-textbox${move ? " is-move" : ""}`}
+      className={`anno-textbox${move ? " is-move" : ""}${selected ? " is-selected" : ""}`}
       style={{ left: note.x + offsetX, top: note.y + offsetY, pointerEvents }}
       onPointerDown={onBoxDown}
       onPointerMove={onBoxMove}
       onPointerUp={onBoxUp}
       onPointerCancel={onBoxUp}
     >
-      <div
-        ref={mirrorRef}
-        className="anno-text anno-mirror"
-        style={{ fontSize: note.fontSize }}
-        aria-hidden="true"
-      >
-        {note.text.length ? note.text : " "}
-      </div>
       <textarea
         ref={textAreaRef}
         className="anno-text"
@@ -239,6 +251,15 @@ function TextBox({
         }}
         onChange={(e) => onText(e.target.value)}
         onBlur={onBlur}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            // Blur fires onBlur (which clears editingId and prunes empty
+            // boxes); onEscape then swaps the tool back to cursor.
+            e.currentTarget.blur();
+            onEscape();
+          }
+        }}
         placeholder="Type…"
       />
       <span
@@ -307,8 +328,29 @@ export function AnnotationLayer({
   const [color, setColor] = useState(COLORS[0]);
   const [fontSize, setFontSize] = useState(16);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Two-step confirm for "Clear all": first click arms it (button turns red,
+  // tooltip changes to "Click again to confirm"), second click within
+  // CLEAR_CONFIRM_MS actually clears. Otherwise it auto-disarms.
+  const [confirmingClear, setConfirmingClear] = useState(false);
+  const clearConfirmTimer = useRef<number | null>(null);
   const [draft, setDraft] = useState<Stroke | null>(null);
   const drawing = useRef(false);
+  // Multi-selection (cursor mode): strokes by array index, text boxes by id.
+  const [selStrokes, setSelStrokes] = useState<Set<number>>(() => new Set());
+  const [selTexts, setSelTexts] = useState<Set<string>>(() => new Set());
+  // Drag-state shared between stroke and textbox initiators. Captured at
+  // pointerdown so the group moves relative to its starting positions.
+  type DragSnap = {
+    startClientX: number;
+    startClientY: number;
+    strokesSnap: { index: number; points: number[] }[];
+    textsSnap: { id: string; x: number; y: number }[];
+    initiator: { kind: "stroke"; key: number } | { kind: "text"; key: string };
+    wasSelected: boolean;
+    modifier: boolean;
+    moved: boolean;
+  };
+  const dragRef = useRef<DragSnap | null>(null);
   const [collapsedLocal, setCollapsedLocal] = useState(false);
   const collapsed = collapsedProp ?? collapsedLocal;
   const setCollapsed: Dispatch<SetStateAction<boolean>> =
@@ -333,6 +375,17 @@ export function AnnotationLayer({
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (isEditable(e.target)) return;
+      // Delete-key path: only consume the keystroke when there's something
+      // selected to delete; otherwise let it pass through (e.g. browser back).
+      if (e.key === "Backspace" || e.key === "Delete") {
+        if (selStrokes.size === 0 && selTexts.size === 0) return;
+        e.preventDefault();
+        onChange(annotations.filter((_, i) => !selStrokes.has(i)));
+        onTextsChange(texts.filter((t) => !selTexts.has(t.id)));
+        setSelStrokes(new Set());
+        setSelTexts(new Set());
+        return;
+      }
       const k = e.key.toLowerCase();
       if (k === "t") {
         e.preventDefault();
@@ -344,7 +397,46 @@ export function AnnotationLayer({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [editingId]);
+  }, [editingId, selStrokes, selTexts, annotations, texts, onChange, onTextsChange]);
+
+  // Switching to any non-cursor tool clears the selection. Selection only
+  // makes sense in cursor mode.
+  useEffect(() => {
+    if (tool !== "off") {
+      setSelStrokes(new Set());
+      setSelTexts(new Set());
+    }
+  }, [tool]);
+
+  // Pointerdown anywhere outside an annotation clears the selection. If the
+  // click landed on a different (unselected) annotation, that annotation's
+  // own pointerdown sets the new selection — net effect: the previous
+  // selection drops away and the clicked one becomes selected. Toolbar
+  // clicks are *not* spared so any toolbar action (or even a no-op click)
+  // also deselects, matching the "click anything outside the selection"
+  // mental model.
+  //
+  // What counts as "on an annotation": a stroke is the actual <path> element
+  // inside the annotation SVG (its halo path has pointer-events: none), and
+  // a textbox is anything inside `.anno-textbox`. The SVG element *itself*
+  // is intentionally not spared — clicking the empty SVG area (no stroke
+  // under the pointer) should clear, since browsers can deliver such a
+  // click with the `<svg>` as the target rather than letting it pass
+  // through to the lyrics underneath.
+  useEffect(() => {
+    if (selStrokes.size === 0 && selTexts.size === 0) return;
+    const onWinDown = (e: PointerEvent) => {
+      const target = e.target as Element | null;
+      if (!target) return;
+      const tag = target.tagName.toLowerCase();
+      if (tag === "path" && target.closest(".anno-svg")) return;
+      if (target.closest(".anno-textbox")) return;
+      setSelStrokes(new Set());
+      setSelTexts(new Set());
+    };
+    window.addEventListener("pointerdown", onWinDown);
+    return () => window.removeEventListener("pointerdown", onWinDown);
+  }, [selStrokes, selTexts]);
 
   const onGripDown = (e: React.PointerEvent) => {
     e.stopPropagation();
@@ -567,11 +659,143 @@ export function AnnotationLayer({
     },
     [annotations],
   );
-  const strokeDrag = useRef<{ index: number; x: number; y: number; pts: number[] } | null>(null);
+  // Shared drag/selection logic, invoked from both the SVG (strokes) and
+  // TextBox (text annotations). Selection updates "eagerly" at pointerdown
+  // for unselected items (so they highlight as the user begins to drag);
+  // already-selected items defer their resolution to pointerup so a click
+  // can still toggle them off without losing them mid-drag.
+  const beginDrag = (
+    kind: "stroke" | "text",
+    key: number | string,
+    clientX: number,
+    clientY: number,
+    modifier: boolean,
+  ) => {
+    const wasSelected =
+      kind === "stroke"
+        ? selStrokes.has(key as number)
+        : selTexts.has(key as string);
+    let nextS: Set<number>;
+    let nextT: Set<string>;
+    if (!wasSelected) {
+      if (modifier) {
+        nextS = new Set(selStrokes);
+        nextT = new Set(selTexts);
+        if (kind === "stroke") nextS.add(key as number);
+        else nextT.add(key as string);
+      } else {
+        nextS = kind === "stroke" ? new Set([key as number]) : new Set();
+        nextT = kind === "text" ? new Set([key as string]) : new Set();
+      }
+      setSelStrokes(nextS);
+      setSelTexts(nextT);
+    } else {
+      nextS = new Set(selStrokes);
+      nextT = new Set(selTexts);
+    }
+    dragRef.current = {
+      startClientX: clientX,
+      startClientY: clientY,
+      strokesSnap: [...nextS].map((i) => ({
+        index: i,
+        points: [...annotations[i].points],
+      })),
+      textsSnap: [...nextT]
+        .map((id) => {
+          const t = texts.find((x) => x.id === id);
+          return t ? { id, x: t.x, y: t.y } : null;
+        })
+        .filter((v): v is { id: string; x: number; y: number } => v !== null),
+      initiator:
+        kind === "stroke"
+          ? { kind: "stroke", key: key as number }
+          : { kind: "text", key: key as string },
+      wasSelected,
+      modifier,
+      moved: false,
+    };
+  };
+
+  const continueDrag = (clientX: number, clientY: number) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const dx = clientX - d.startClientX;
+    const dy = clientY - d.startClientY;
+    if (!d.moved && Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
+    d.moved = true;
+    // Texts are stored in host-pixel coords; strokes are in reference (sheet)
+    // coords. Translate the host-pixel delta into ref-space for strokes.
+    const sw = size.w || 1;
+    const sh = size.h || 1;
+    const refDx = (dx * ref.w) / sw;
+    const refDy = (dy * ref.h) / sh;
+    if (d.textsSnap.length) {
+      const m = new Map(d.textsSnap.map((t) => [t.id, t]));
+      onTextsChange(
+        texts.map((t) => {
+          const o = m.get(t.id);
+          return o ? { ...t, x: o.x + dx, y: o.y + dy } : t;
+        }),
+      );
+    }
+    if (d.strokesSnap.length) {
+      const m = new Map(d.strokesSnap.map((s) => [s.index, s.points]));
+      onChange(
+        annotations.map((s, i) => {
+          const orig = m.get(i);
+          if (!orig) return s;
+          return {
+            ...s,
+            points: orig.map((v, j) => (j % 2 === 0 ? v + refDx : v + refDy)),
+          };
+        }),
+      );
+    }
+  };
+
+  const endDrag = () => {
+    const d = dragRef.current;
+    if (!d) return;
+    // Click without dragging: apply the deferred selection update.
+    if (!d.moved && d.wasSelected) {
+      if (d.modifier) {
+        // Modifier+click on a selected item → toggle off.
+        if (d.initiator.kind === "stroke") {
+          setSelStrokes((s) => {
+            const n = new Set(s);
+            n.delete(d.initiator.key as number);
+            return n;
+          });
+        } else {
+          setSelTexts((s) => {
+            const n = new Set(s);
+            n.delete(d.initiator.key as string);
+            return n;
+          });
+        }
+      } else {
+        // Plain click on a selected item: if it was the sole selection, clear.
+        // Otherwise replace selection with just this item.
+        const total = selStrokes.size + selTexts.size;
+        if (total <= 1) {
+          setSelStrokes(new Set());
+          setSelTexts(new Set());
+        } else {
+          setSelStrokes(
+            new Set(d.initiator.kind === "stroke" ? [d.initiator.key as number] : []),
+          );
+          setSelTexts(
+            new Set(d.initiator.kind === "text" ? [d.initiator.key as string] : []),
+          );
+        }
+      }
+    }
+    dragRef.current = null;
+  };
 
   const onDown = (e: React.PointerEvent) => {
     // Cursor mode: empty-area clicks pass through (lyric selection); only a
-    // stroke hit captures the pointer to drag that stroke.
+    // stroke hit captures the pointer to select/drag that stroke.
     if (tool === "off") {
       const [x, y] = point(e);
       const idx = hitStroke(x, y);
@@ -579,7 +803,8 @@ export function AnnotationLayer({
       e.preventDefault();
       svgRef.current!.setPointerCapture(e.pointerId);
       drawing.current = true;
-      strokeDrag.current = { index: idx, x, y, pts: [...annotations[idx].points] };
+      const modifier = e.shiftKey || e.metaKey || e.ctrlKey;
+      beginDrag("stroke", idx, e.clientX, e.clientY, modifier);
       return;
     }
     // Prevent the browser's default pointer-down focus handling — otherwise
@@ -623,15 +848,11 @@ export function AnnotationLayer({
 
   const onMove = (e: React.PointerEvent) => {
     if (!drawing.current) return;
-    const [x, y] = point(e);
-    if (strokeDrag.current) {
-      const sd = strokeDrag.current;
-      const dx = x - sd.x;
-      const dy = y - sd.y;
-      const moved = sd.pts.map((v, i) => (i % 2 === 0 ? v + dx : v + dy));
-      onChange(annotations.map((s, i) => (i === sd.index ? { ...s, points: moved } : s)));
+    if (dragRef.current) {
+      continueDrag(e.clientX, e.clientY);
       return;
     }
+    const [x, y] = point(e);
     if (tool === "eraser") eraseAt(x, y);
     else setDraft((d) => (d ? { ...d, points: [...d.points, x, y] } : d));
   };
@@ -640,8 +861,8 @@ export function AnnotationLayer({
     if (!drawing.current) return;
     drawing.current = false;
     svgRef.current?.releasePointerCapture(e.pointerId);
-    if (strokeDrag.current) {
-      strokeDrag.current = null;
+    if (dragRef.current) {
+      endDrag();
       return;
     }
     if (draft && draft.points.length >= 2) onChange([...annotations, draft]);
@@ -661,10 +882,34 @@ export function AnnotationLayer({
     if (editingId) updateText(editingId, { fontSize: v });
   };
 
+  const CLEAR_CONFIRM_MS = 3000;
   const clearAll = () => {
+    if (!confirmingClear) {
+      setConfirmingClear(true);
+      if (clearConfirmTimer.current)
+        window.clearTimeout(clearConfirmTimer.current);
+      clearConfirmTimer.current = window.setTimeout(() => {
+        setConfirmingClear(false);
+        clearConfirmTimer.current = null;
+      }, CLEAR_CONFIRM_MS);
+      return;
+    }
+    if (clearConfirmTimer.current) {
+      window.clearTimeout(clearConfirmTimer.current);
+      clearConfirmTimer.current = null;
+    }
+    setConfirmingClear(false);
     onChange([]);
     onTextsChange([]);
   };
+  // Cleanup the confirm timer on unmount.
+  useEffect(
+    () => () => {
+      if (clearConfirmTimer.current)
+        window.clearTimeout(clearConfirmTimer.current);
+    },
+    [],
+  );
 
   // The SVG always accepts events so a click on a painted stroke can start a
   // drag in cursor mode; empty SVG areas pass through to the lyrics underneath
@@ -718,8 +963,19 @@ export function AnnotationLayer({
             <button className={`anno-btn${tool === "eraser" ? " active" : ""}`}
               onClick={() => setTool("eraser")} title="Eraser (removes whole strokes)"
               aria-label="Eraser">{EraserIcon}</button>
-            <button className="anno-btn" onClick={clearAll} disabled={empty}
-              title="Clear all annotations" aria-label="Clear all">{TrashIcon}</button>
+            <button
+              className={`anno-btn${confirmingClear ? " is-confirming" : ""}`}
+              onClick={clearAll}
+              disabled={empty}
+              title={
+                confirmingClear
+                  ? "Click again to confirm — this removes all pen and text annotations"
+                  : "Clear all annotations"
+              }
+              aria-label={confirmingClear ? "Confirm clear all" : "Clear all"}
+            >
+              {TrashIcon}
+            </button>
           </>
         )}
         <button
@@ -756,6 +1012,23 @@ export function AnnotationLayer({
         {tool !== "off" && (
           <rect x={0} y={0} width={ref.w} height={ref.h} fill="transparent" />
         )}
+        {/* Selection halos render under the strokes so the original color
+            stays readable. */}
+        {tool === "off" && annotations.map((s, i) =>
+          selStrokes.has(i) ? (
+            <path
+              key={`sel-${i}`}
+              d={strokePath(s)}
+              stroke="rgba(42,108,220,0.35)"
+              strokeWidth={s.width + 8}
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
+              pointerEvents="none"
+            />
+          ) : null,
+        )}
         {annotations.map((s, i) => (
           <path key={i} d={strokePath(s)} stroke={s.color} strokeWidth={s.width}
             fill="none" strokeLinecap="round" strokeLinejoin="round"
@@ -782,6 +1055,7 @@ export function AnnotationLayer({
             key={t.id}
             note={t}
             editing={editingId === t.id}
+            selected={selTexts.has(t.id)}
             eraser={tool === "eraser"}
             // Cursor mode: text boxes are draggable like the old "move" tool.
             move={tool === "off"}
@@ -792,7 +1066,6 @@ export function AnnotationLayer({
             scaleY={1}
             onText={(text) => updateText(t.id, { text })}
             onResize={(w, h) => updateText(t.id, { w, h })}
-            onMove={(x, y) => updateText(t.id, { x, y })}
             onEdit={() => setEditingId(t.id)}
             onActivateText={() => {
               setTool("text");
@@ -803,6 +1076,12 @@ export function AnnotationLayer({
               if (!t.text.trim()) removeText(t.id);
               setEditingId((cur) => (cur === t.id ? null : cur));
             }}
+            onEscape={() => setTool("off")}
+            onSelectDown={(id, cx, cy, modifier) =>
+              beginDrag("text", id, cx, cy, modifier)
+            }
+            onSelectMove={(cx, cy) => continueDrag(cx, cy)}
+            onSelectUp={() => endDrag()}
           />
         );
       })}

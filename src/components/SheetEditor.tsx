@@ -147,12 +147,14 @@ export function SheetEditor({
       el.scrollBy({ top: dir * step, behavior: "smooth" });
     };
     const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // Escape inside a textarea (a text annotation, the chord editor) is
+      // for cancelling that edit — don't also exit present mode.
+      if (isEditable(e.target)) return;
       if (e.key === "Escape") {
         setPresenting(false);
         return;
       }
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (isEditable(e.target)) return;
       const k = e.key.toLowerCase();
       if (e.key === "ArrowRight" || k === "d") {
         e.preventDefault();
