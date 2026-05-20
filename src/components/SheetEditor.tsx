@@ -129,10 +129,44 @@ export function SheetEditor({
   });
   useEffect(() => {
     if (!presenting) return;
+    const isEditable = (el: EventTarget | null) => {
+      if (!(el instanceof HTMLElement)) return false;
+      const tag = el.tagName;
+      return (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        el.isContentEditable
+      );
+    };
+    const scrollPage = (dir: 1 | -1) => {
+      const el = presentOverlayRef.current;
+      if (!el) return;
+      // Scroll roughly a viewport-half per press.
+      const step = Math.max(60, el.clientHeight * 0.5);
+      el.scrollBy({ top: dir * step, behavior: "smooth" });
+    };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setPresenting(false);
-      else if (e.key === "ArrowRight") navRef.current?.onNext?.();
-      else if (e.key === "ArrowLeft") navRef.current?.onPrev?.();
+      if (e.key === "Escape") {
+        setPresenting(false);
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isEditable(e.target)) return;
+      const k = e.key.toLowerCase();
+      if (e.key === "ArrowRight" || k === "d") {
+        e.preventDefault();
+        navRef.current?.onNext?.();
+      } else if (e.key === "ArrowLeft" || k === "a") {
+        e.preventDefault();
+        navRef.current?.onPrev?.();
+      } else if (e.key === "ArrowDown" || k === "s") {
+        e.preventDefault();
+        scrollPage(1);
+      } else if (e.key === "ArrowUp" || k === "w") {
+        e.preventDefault();
+        scrollPage(-1);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -170,6 +204,7 @@ export function SheetEditor({
   const setSplit = onSplitChange;
   const bodyRef = useRef<HTMLDivElement>(null);
   const renderRef = useRef<HTMLDivElement>(null);
+  const presentOverlayRef = useRef<HTMLDivElement>(null);
   const [exporting, setExporting] = useState(false);
   const dragging = useRef(false);
 
@@ -350,6 +385,42 @@ export function SheetEditor({
     return () => window.removeEventListener("keydown", h);
   }, []);
 
+  // Modifier-free single-key shortcuts. Suppressed while the user is typing
+  // in any editable target (chord-editor textarea, text annotation boxes,
+  // key dropdown, rename inputs, etc.).
+  useEffect(() => {
+    const isEditable = (el: EventTarget | null) => {
+      if (!(el instanceof HTMLElement)) return false;
+      const tag = el.tagName;
+      return (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        el.isContentEditable
+      );
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isEditable(e.target)) return;
+      const k = e.key.toLowerCase();
+      if (k === "f") {
+        e.preventDefault();
+        setPresenting((p) => !p);
+      } else if (k === "e") {
+        e.preventDefault();
+        setEditorHidden((h) => !h);
+      } else if (k === "c") {
+        e.preventDefault();
+        setNumberMode(false);
+      } else if (k === "n") {
+        e.preventDefault();
+        setNumberMode(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [setPresenting, setEditorHidden, setNumberMode]);
+
   // Step the display key by a semitone (pitch class wraps the octave),
   // spelling it with the preferred accidental.
   const stepKey = useCallback(
@@ -358,6 +429,32 @@ export function SheetEditor({
     },
     [preferFlats],
   );
+
+  // ↑ / ↓ transpose the display key while editing. In present mode these
+  // keys scroll the overlay instead (handled by the present-mode effect).
+  useEffect(() => {
+    if (presenting) return;
+    if (numberMode) return;
+    const isEditable = (el: EventTarget | null) => {
+      if (!(el instanceof HTMLElement)) return false;
+      const tag = el.tagName;
+      return (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        el.isContentEditable
+      );
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      if (isEditable(e.target)) return;
+      e.preventDefault();
+      stepKey(e.key === "ArrowUp" ? 1 : -1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [presenting, numberMode, stepKey]);
   // Pick the ♯ or ♭ spelling for the current key.
   const setAccidental = useCallback(
     (flats: boolean) => {
@@ -430,7 +527,7 @@ export function SheetEditor({
             className="tb-icon-btn"
             onClick={() => setPresenting(true)}
             aria-label="Present"
-            title="Present full screen (Esc to exit)"
+            title="Present full screen (F · Esc to exit)"
           >
             <PresentIcon />
           </button>
@@ -446,7 +543,7 @@ export function SheetEditor({
               onClick={() => stepKey(-1)}
               disabled={numberMode}
               aria-label="Transpose down a semitone"
-              title="Down a semitone"
+              title="Down a semitone (↓)"
             >
               −
             </button>
@@ -468,7 +565,7 @@ export function SheetEditor({
               onClick={() => stepKey(1)}
               disabled={numberMode}
               aria-label="Transpose up a semitone"
-              title="Up a semitone"
+              title="Up a semitone (↑)"
             >
               +
             </button>
@@ -522,6 +619,7 @@ export function SheetEditor({
             className={!numberMode ? "active" : ""}
             aria-pressed={!numberMode}
             onClick={() => setNumberMode(false)}
+            title="Chords (C)"
           >
             Chords
           </button>
@@ -530,6 +628,7 @@ export function SheetEditor({
             className={numberMode ? "active" : ""}
             aria-pressed={numberMode}
             onClick={() => setNumberMode(true)}
+            title="Numbers (N)"
           >
             Numbers
           </button>
@@ -573,7 +672,7 @@ export function SheetEditor({
               setEditorHidden(true);
             }}
             aria-label="Hide the editor"
-            title="Hide the editor"
+            title="Hide the editor (E)"
           >
             ‹
           </button>
@@ -586,7 +685,7 @@ export function SheetEditor({
             className="editor-peek"
             onClick={() => setEditorHidden(false)}
             aria-label="Show the editor"
-            title="Show the editor"
+            title="Show the editor (E)"
           >
             ›
           </button>
@@ -610,11 +709,11 @@ export function SheetEditor({
         </div>
       </div>
       {presenting && (
-        <div className="present-overlay">
+        <div className="present-overlay" ref={presentOverlayRef}>
           <button
             className="present-exit"
             onClick={() => setPresenting(false)}
-            title="Exit full screen (Esc)"
+            title="Exit full screen (F · Esc)"
             aria-label="Exit full screen"
           >
             <XIcon />

@@ -77,6 +77,26 @@ Then open the URL Vite prints (typically <http://localhost:5173>).
    `.json` backup, restore from one, or (on Chromium) link a folder for
    continuous auto-save.
 
+## Keyboard shortcuts
+
+Active while viewing a song; suppressed whenever a text field, the chord
+editor, or a text-annotation box has focus.
+
+| Key | Action                       |
+| --- | ---------------------------- |
+| `F` | Toggle present full-screen   |
+| `E` | Toggle the chord editor pane |
+| `C` | Switch to Chords             |
+| `N` | Switch to Numbers            |
+| `T` | Annotation: text-box tool    |
+| `P` | Annotation: cursor / pointer |
+| `↑` / `↓` | Transpose up / down a semitone (editor); scroll the page (present) |
+| `←` / `→` | Previous / next song in a set |
+| `W` / `S` | Scroll page up / down (present only) |
+| `A` / `D` | Previous / next song (present only)  |
+| `Esc`     | Exit present mode         |
+| `⌘/Ctrl + S` | Save                   |
+
 ## Project layout
 
 ```

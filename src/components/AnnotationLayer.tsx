@@ -316,6 +316,36 @@ export function AnnotationLayer({
   const [pos, setPos] = useState({ dx: 0, dy: 0 });
   const gripDrag = useRef<{ x: number; y: number; dx: number; dy: number } | null>(null);
 
+  // T → Text tool, P → cursor/pointer. Suppressed while a text annotation
+  // is being edited or any other editable element has focus.
+  useEffect(() => {
+    if (editingId) return;
+    const isEditable = (el: EventTarget | null) => {
+      if (!(el instanceof HTMLElement)) return false;
+      const tag = el.tagName;
+      return (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        el.isContentEditable
+      );
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isEditable(e.target)) return;
+      const k = e.key.toLowerCase();
+      if (k === "t") {
+        e.preventDefault();
+        setTool("text");
+      } else if (k === "p") {
+        e.preventDefault();
+        setTool("off");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [editingId]);
+
   const onGripDown = (e: React.PointerEvent) => {
     e.stopPropagation();
     e.preventDefault();
@@ -666,7 +696,7 @@ export function AnnotationLayer({
           <>
             <button className={`anno-btn${tool === "off" ? " active" : ""}`}
               onClick={() => setTool("off")}
-              title="Cursor — select text on empty areas, drag annotations when hovering"
+              title="Cursor (P) — select text on empty areas, drag annotations when hovering"
               aria-label="Cursor">{CursorIcon}</button>
             {COLORS.map((c) => (
               <button key={c}
@@ -676,7 +706,7 @@ export function AnnotationLayer({
                 title="Pen" aria-label={`Pen ${c}`} />
             ))}
             <button className={`anno-btn${tool === "text" ? " active" : ""}`}
-              onClick={() => setTool("text")} title="Text box" aria-label="Text box"
+              onClick={() => setTool("text")} title="Text box (T)" aria-label="Text box"
               style={{ fontWeight: 700 }}>T</button>
             <div className="anno-fontsize" title="Font size">
               <button className="anno-btn" onClick={() => setSizeFor(fontSize - 2)}
