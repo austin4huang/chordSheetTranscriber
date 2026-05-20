@@ -12,6 +12,11 @@ interface Props {
   onAnnotationsChange?: (next: Stroke[]) => void;
   texts?: TextNote[];
   onTextsChange?: (next: TextNote[]) => void;
+  /** Reference content size the annotations were authored against, so the
+   *  AnnotationLayer can scale them when the sheet re-renders at a different
+   *  size. The first authored annotation seeds it via `onAnnoRefChange`. */
+  annoRef?: { w: number; h: number } | null;
+  onAnnoRefChange?: (ref: { w: number; h: number }) => void;
   /** Attached to the .sheet-render box so it can be rasterized for export. */
   rootRef?: Ref<HTMLDivElement>;
 }
@@ -97,16 +102,34 @@ function withAccidentals(text: string): ReactNode {
   );
 }
 
-function LineRow({ line, ctx }: { line: SheetLine; ctx: XformCtx }) {
-  if (line.kind === "blank") return <div className="sr-blank" />;
-  if (line.kind === "section") return <div className="sr-section">{line.text}</div>;
+function LineRow({
+  line,
+  ctx,
+  index,
+}: {
+  line: SheetLine;
+  ctx: XformCtx;
+  index: number;
+}) {
+  if (line.kind === "blank")
+    return <div className="sr-blank" data-line-index={index} />;
+  if (line.kind === "section")
+    return (
+      <div className="sr-section" data-line-index={index}>
+        {line.text}
+      </div>
+    );
   if (line.kind === "chord-only") {
-    return <div className="sr-chordonly">{withAccidentals(transformBarLine(line.text, ctx))}</div>;
+    return (
+      <div className="sr-chordonly" data-line-index={index}>
+        {withAccidentals(transformBarLine(line.text, ctx))}
+      </div>
+    );
   }
   // chordpro
   const tokens = tokenizeChordPro(line.text);
   return (
-    <div className="sr-line">
+    <div className="sr-line" data-line-index={index}>
       {tokens.map((t, i) => (
         <span className="sr-pair" key={i}>
           <span className="sr-chord">
@@ -127,6 +150,8 @@ export function SheetRenderer({
   onAnnotationsChange,
   texts,
   onTextsChange,
+  annoRef,
+  onAnnoRefChange,
   rootRef,
 }: Props) {
   const ctx: XformCtx = {
@@ -143,6 +168,8 @@ export function SheetRenderer({
           onChange={onAnnotationsChange}
           texts={texts ?? []}
           onTextsChange={onTextsChange}
+          refSize={annoRef ?? null}
+          onRefSize={onAnnoRefChange}
         />
       )}
       <header className="sr-header">
@@ -160,9 +187,27 @@ export function SheetRenderer({
         </div>
       </header>
       <div className="sr-body">
-        {sheet.lines.map((line, i) => (
-          <LineRow key={i} line={line} ctx={ctx} />
-        ))}
+        {(() => {
+          // Group each section header with the lines that follow it so the
+          // browser tries to keep them together within a column. A section
+          // is only split when the group is so tall the engine can't keep
+          // it in one column (the natural "imbalance" threshold).
+          const groups: { start: number; items: { line: SheetLine; idx: number }[] }[] = [];
+          sheet.lines.forEach((line, i) => {
+            if (line.kind === "section" || groups.length === 0) {
+              groups.push({ start: i, items: [{ line, idx: i }] });
+            } else {
+              groups[groups.length - 1].items.push({ line, idx: i });
+            }
+          });
+          return groups.map((g) => (
+            <div key={g.start} className="sr-section-group">
+              {g.items.map(({ line, idx }) => (
+                <LineRow key={idx} line={line} ctx={ctx} index={idx} />
+              ))}
+            </div>
+          ));
+        })()}
       </div>
     </div>
   );

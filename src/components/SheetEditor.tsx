@@ -8,10 +8,10 @@ import {
   type SetStateAction,
 } from "react";
 import type { ChordSheet, Stroke, TextNote } from "../lib/types";
-import { linesToText, textToSheet, saveSheet } from "../lib/storage";
+import { linesToText, textToSheet, saveSheet, updateSheet } from "../lib/storage";
 import { noteToPitchClass, keyPrefersFlats } from "../lib/nashville";
 import { SheetRenderer } from "./SheetRenderer";
-import { exportRenderedPdf } from "../lib/pdfExport";
+import { exportSongRenderedPdf } from "../lib/pdfExport";
 import { DownloadIcon } from "./icons";
 import "./SheetEditor.css";
 
@@ -66,14 +66,6 @@ interface Props {
   onPresentingChange: Dispatch<SetStateAction<boolean>>;
   split: number;
   onSplitChange: Dispatch<SetStateAction<number>>;
-  /** Chosen display (transposed) key + accidental spelling. Owned by the
-   *  parent so a key picked while leading a set carries to the next song
-   *  instead of resetting. Empty string = "not chosen yet" (use the song's
-   *  own key). */
-  displayKey: string;
-  onDisplayKeyChange: Dispatch<SetStateAction<string>>;
-  preferFlats: boolean;
-  onPreferFlatsChange: Dispatch<SetStateAction<boolean>>;
 }
 
 export function SheetEditor({
@@ -89,15 +81,17 @@ export function SheetEditor({
   onPresentingChange,
   split,
   onSplitChange,
-  displayKey,
-  onDisplayKeyChange,
-  preferFlats,
-  onPreferFlatsChange,
 }: Props) {
   const [text, setText] = useState(() => linesToText(initial));
   // Text as of the last save, for dirty-tracking and the Save button state.
   const [annotations, setAnnotations] = useState<Stroke[]>(initial.annotations ?? []);
   const [texts, setTexts] = useState<TextNote[]>(initial.texts ?? []);
+  // Reference size the strokes/text-boxes above live in. Seeded the first
+  // time the user authors something (the AnnotationLayer calls back here),
+  // then persisted so future resizes scale annotations proportionally.
+  const [annoRef, setAnnoRef] = useState<{ w: number; h: number } | undefined>(
+    initial.annoRef,
+  );
   const [savedText, setSavedText] = useState(text);
   const [savedAnno, setSavedAnno] = useState(() =>
     JSON.stringify([initial.annotations ?? [], initial.texts ?? []]),
@@ -107,11 +101,14 @@ export function SheetEditor({
   const annoKey = JSON.stringify([annotations, texts]);
   const dirty = text !== savedText || annoKey !== savedAnno;
   const setNumberMode = onNumberModeChange;
-  // displayKey / preferFlats are parent-owned so they persist across songs
-  // in a set (see Props). They're seeded from the song's own key the first
-  // time a song is opened (when displayKey is still "").
-  const setDisplayKey = onDisplayKeyChange;
-  const setPreferFlats = onPreferFlatsChange;
+  // Per-song persisted display key (transposed) + accidental spelling.
+  // Initialised from the saved sheet (falls back to the song's own key).
+  const [displayKey, setDisplayKey] = useState(
+    initial.displayKey || initial.key,
+  );
+  const [preferFlats, setPreferFlats] = useState(
+    initial.preferFlats ?? isFlatSpelling(initial.displayKey || initial.key),
+  );
   const setEditorHidden = onEditorHiddenChange;
   const setPresenting = onPresentingChange;
 
@@ -130,6 +127,33 @@ export function SheetEditor({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [presenting]);
+
+  // Outside present mode: ←/→ also flip between songs in the set, unless
+  // the user is typing (editor textarea, an annotation text box, etc.).
+  useEffect(() => {
+    if (presenting) return; // already handled by the present-mode listener
+    if (!setNav) return;
+    const isEditable = (el: EventTarget | null) => {
+      if (!(el instanceof HTMLElement)) return false;
+      const tag = el.tagName;
+      return (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        el.isContentEditable
+      );
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      if (isEditable(e.target)) return;
+      e.preventDefault();
+      if (e.key === "ArrowRight") navRef.current?.onNext?.();
+      else navRef.current?.onPrev?.();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [presenting, setNav]);
 
   // Resizable split between the Editor and Preview panes (percent width of
   // the left pane).
@@ -159,37 +183,57 @@ export function SheetEditor({
     return textToSheet(text, initial);
   }, [text, initial]);
 
-  // displayKey/preferFlats live in the parent (persist across a set), so they
-  // must be updated from EFFECTS, never during render — setting a parent's
-  // state while rendering this child throws and loops.
-  //
-  // Use the song's own key until one is chosen/carried.
-  const activeKey = displayKey || sheet.key;
+  // When the song's actual key changes (parsed from a `{key:}` directive
+  // edit *within this song*), update the display key to it. Local-component
+  // setState during render is allowed and converges; we don't touch state
+  // belonging to the parent here.
+  const [prevSongKey, setPrevSongKey] = useState(sheet.key);
+  if (sheet.key !== prevSongKey) {
+    setPrevSongKey(sheet.key);
+    setDisplayKey(sheet.key);
+    setPreferFlats(isFlatSpelling(sheet.key));
+  }
 
-  // Seed once on mount when nothing is carried yet (a fresh song / new set).
+  // Persist the per-song display key + accidental whenever they change so
+  // navigating back to this song restores its transposition. We write only
+  // those two fields (storage.updateSheet), so unsaved text edits aren't
+  // disturbed. Skipped on the first render (initial state already matches).
+  // Seed the ref with the same values the state was initialised to so the
+  // first effect run is a no-op (we only write on actual user changes).
+  const persistedKeyRef = useRef({
+    displayKey: initial.displayKey || initial.key,
+    preferFlats:
+      initial.preferFlats ?? isFlatSpelling(initial.displayKey || initial.key),
+  });
+  // Persist the annotation reference size when it's seeded/changed, so a
+  // reload renders existing annotations against the same coordinate space.
+  const persistedAnnoRef = useRef(initial.annoRef);
   useEffect(() => {
-    if (!displayKey) {
-      setDisplayKey(sheet.key);
-      setPreferFlats(isFlatSpelling(sheet.key));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Follow the {key:} directive when it's edited within *this* song. The ref
-  // starts at the mounted song's key, so navigating songs (remount) doesn't
-  // clobber the carried key — only an in-song edit does.
-  const songKeyRef = useRef(sheet.key);
+    const a = persistedAnnoRef.current;
+    const b = annoRef;
+    if ((a?.w ?? 0) === (b?.w ?? 0) && (a?.h ?? 0) === (b?.h ?? 0)) return;
+    persistedAnnoRef.current = b;
+    if (b) updateSheet(initial.id, { annoRef: b });
+  }, [annoRef, initial.id]);
   useEffect(() => {
-    if (sheet.key !== songKeyRef.current) {
-      songKeyRef.current = sheet.key;
-      setDisplayKey(sheet.key);
-      setPreferFlats(isFlatSpelling(sheet.key));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sheet.key]);
+    const same =
+      persistedKeyRef.current.displayKey === displayKey &&
+      persistedKeyRef.current.preferFlats === preferFlats;
+    if (same) return;
+    persistedKeyRef.current = { displayKey, preferFlats };
+    updateSheet(initial.id, { displayKey, preferFlats });
+  }, [displayKey, preferFlats, initial.id]);
 
   const onSave = () => {
-    const toSave = { ...sheet, annotations, texts, updatedAt: Date.now() };
+    const toSave = {
+      ...sheet,
+      annotations,
+      texts,
+      annoRef,
+      displayKey,
+      preferFlats,
+      updatedAt: Date.now(),
+    };
     saveSheet(toSave);
     setSavedText(text);
     setSavedAnno(annoKey);
@@ -199,13 +243,22 @@ export function SheetEditor({
     onSaved(toSave);
   };
   const onExport = async () => {
-    if (!renderRef.current || exporting) return;
+    if (exporting) return;
     setExporting(true);
     try {
-      // Capture the live preview so it matches the editor exactly (chords/
-      // numbers, current key, strokes + text boxes). Embed current data so
-      // reimport restores annotations too.
-      await exportRenderedPdf(renderRef.current, { ...sheet, annotations, texts });
+      // Render the song off-screen for the PDF (same path used by the song
+      // list and set downloads), so the output is consistent regardless of
+      // the editor's current view width / column count / panel layout.
+      // The current display key, accidental spelling, and annotations are
+      // included so the export reflects what you've edited this session.
+      await exportSongRenderedPdf({
+        ...sheet,
+        annotations,
+        texts,
+        annoRef,
+        displayKey,
+        preferFlats,
+      });
     } catch (e) {
       console.error("PDF export failed", e);
       alert("Sorry — couldn't generate the PDF.");
@@ -243,21 +296,19 @@ export function SheetEditor({
   // spelling it with the preferred accidental.
   const stepKey = useCallback(
     (delta: number) => {
-      setDisplayKey((cur) =>
-        spellKey((keyIndex(cur || sheet.key) + delta + 12) % 12, preferFlats),
-      );
+      setDisplayKey((cur) => spellKey((keyIndex(cur) + delta + 12) % 12, preferFlats));
     },
-    [preferFlats, sheet.key],
+    [preferFlats],
   );
   // Pick the ♯ or ♭ spelling for the current key.
   const setAccidental = useCallback(
     (flats: boolean) => {
       setPreferFlats(flats);
-      setDisplayKey((cur) => spellKey(keyIndex(cur || sheet.key), flats));
+      setDisplayKey((cur) => spellKey(keyIndex(cur), flats));
     },
-    [sheet.key],
+    [],
   );
-  const pc = keyIndex(activeKey);
+  const pc = keyIndex(displayKey);
   const isEnharmonic = ENHARMONIC.has(pc);
   // Compare by pitch class so an enharmonic spelling of the song key isn't
   // treated as transposed.
@@ -471,11 +522,13 @@ export function SheetEditor({
           <SheetRenderer
             sheet={sheet}
             numberMode={numberMode}
-            displayKey={activeKey}
+            displayKey={displayKey}
             annotations={annotations}
             onAnnotationsChange={setAnnotations}
             texts={texts}
             onTextsChange={setTexts}
+            annoRef={annoRef ?? null}
+            onAnnoRefChange={setAnnoRef}
             rootRef={renderRef}
           />
         </div>
@@ -515,11 +568,13 @@ export function SheetEditor({
             <SheetRenderer
               sheet={sheet}
               numberMode={numberMode}
-              displayKey={activeKey}
+              displayKey={displayKey}
               annotations={annotations}
               onAnnotationsChange={setAnnotations}
-            texts={texts}
-            onTextsChange={setTexts}
+              texts={texts}
+              onTextsChange={setTexts}
+              annoRef={annoRef ?? null}
+              onAnnoRefChange={setAnnoRef}
             />
           </div>
         </div>

@@ -16,8 +16,10 @@ export interface Stroke {
   points: number[];
 }
 
-// A free-positioned text annotation. x/y are the box's top-left in pixels
-// relative to the rendered sheet's content box.
+// A free-positioned text annotation. When `anchor` is set, x/y are pixels
+// relative to that line's top-left, so the box reflows with the line on
+// resize / column changes. Without `anchor` they're absolute pixels in the
+// sheet's content box (legacy; auto-migrated to anchored on first render).
 export interface TextNote {
   id: string;
   x: number;
@@ -27,6 +29,7 @@ export interface TextNote {
   color: string;
   w?: number;          // manual box size; unset = auto-fit to text
   h?: number;
+  anchor?: { lineIndex: number };
 }
 
 export interface ChordSheet {
@@ -40,6 +43,17 @@ export interface ChordSheet {
   lines: SheetLine[];
   annotations?: Stroke[];
   texts?: TextNote[];
+  /** Pixel size of the rendered sheet content box at the time the
+   *  annotations above were authored. Used to proportionally scale strokes
+   *  and text boxes when the sheet re-renders at a different size. Legacy
+   *  sheets without this field render with no scaling (effectively the
+   *  current size = reference). */
+  annoRef?: { w: number; h: number };
+  /** Chosen display (transposed) key + accidental spelling, persisted per
+   *  song. Unset = use the song's own `key`. Number-mode is a set-wide view
+   *  toggle (App state) that doesn't touch these. */
+  displayKey?: string;
+  preferFlats?: boolean;
   createdAt?: number;     // unset on legacy sheets — fall back to updatedAt
   updatedAt: number;
 }

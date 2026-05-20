@@ -6,7 +6,9 @@ import {
   listSets, saveSet, deleteSet, createdAtOf,
 } from "../lib/storage";
 import { parsePdfToSheets, extractEmbeddedPayload } from "../lib/pdfParser";
-import { exportSongPdf, exportSetPdf } from "../lib/pdfExport";
+import {
+  exportSongRenderedPdf, exportSetRenderedPdf,
+} from "../lib/pdfExport";
 import { importChords, toChordSheet } from "../lib/chordImport";
 import {
   DownloadIcon, EditIcon, TrashIcon, PlusIcon, FileImportIcon, LinkIcon,
@@ -715,7 +717,7 @@ export function SheetList({ onOpen }: Props) {
                         className="ghost-btn"
                         title="Download this set as a PDF (re-importable)"
                         onClick={() =>
-                          exportSetPdf(
+                          exportSetRenderedPdf(
                             set.name,
                             set.sheetIds
                               .map((id) => sheets.find((s) => s.id === id))
@@ -893,7 +895,7 @@ export function SheetList({ onOpen }: Props) {
                 <button
                   className="ghost-btn sheet-export"
                   title="Download as PDF (re-importable)"
-                  onClick={() => exportSongPdf(s)}
+                  onClick={() => exportSongRenderedPdf(s)}
                 >
                   <DownloadIcon /><span className="btn-pdf-label">PDF</span>
                 </button>

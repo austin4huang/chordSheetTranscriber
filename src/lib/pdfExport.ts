@@ -6,7 +6,10 @@
 
 import { jsPDF } from "jspdf";
 import { toPng } from "html-to-image";
+import React from "react";
+import { createRoot } from "react-dom/client";
 import type { ChordSheet } from "./types";
+import { SheetRenderer } from "../components/SheetRenderer";
 
 const MARKER = "CHORDSHEETv1:";
 
@@ -267,25 +270,7 @@ export async function exportRenderedPdf(
   const img = await loadImage(dataUrl);
 
   const doc = newDoc();
-  const margin = 24;
-  const contentW = 612 - margin * 2;
-  const contentH = PAGE_H - margin * 2;
-  const scale = contentW / img.naturalWidth; // pt per source px
-  const fullH = img.naturalHeight * scale;
-  const pages = Math.max(1, Math.ceil(fullH / contentH));
-
-  for (let i = 0; i < pages; i++) {
-    if (i > 0) doc.addPage();
-    // Shift the (full-height) image up each page; jsPDF clips to the page.
-    doc.addImage(
-      dataUrl,
-      "PNG",
-      margin,
-      margin - i * contentH,
-      contentW,
-      fullH,
-    );
-  }
+  paginateImageInto(doc, img, false);
 
   doc.setProperties({
     title: sheet.title,
@@ -293,4 +278,160 @@ export async function exportRenderedPdf(
     keywords: encodePayload({ v: 1, kind: "song", sheet }),
   });
   triggerDownload(doc, `${safeName(sheet.title)}.pdf`);
+}
+
+// --- Off-screen rendering (used by per-song list export + set export) ------
+// Mount SheetRenderer into a hidden DOM node so we can capture the same
+// visuals you see in the editor preview (chords/annotations/key/etc.) even
+// when the song isn't currently open.
+
+// Wide enough for the renderer to flow into 2 columns (`.sr-body` uses
+// column-width: 26rem ≈ 416 px + a 2.5rem gap, so it needs ~870 px+). The
+// captured image is then scaled to fit the PDF's content width, which makes
+// the text proportionally smaller but fits more song per page.
+const OFFSCREEN_WIDTH = 1100;
+
+async function renderSheetToPng(sheet: ChordSheet): Promise<string> {
+  const container = document.createElement("div");
+  container.className = "pdf-export-host";
+  container.style.cssText =
+    `position: fixed; left: -99999px; top: 0; width: ${OFFSCREEN_WIDTH}px;` +
+    " background: #ffffff; padding: 0; z-index: -1; pointer-events: none;";
+  document.body.appendChild(container);
+  // Scoped overrides so the export matches the clean "presenting" look: no
+  // sheet-card border / padding / min-height (kills the trailing whitespace
+  // on short songs) and no text-box borders or resize handles (editing
+  // chrome shouldn't appear in the PDF). Lives in <head> so React's render
+  // doesn't strip it out of the container.
+  const styleEl = document.createElement("style");
+  styleEl.dataset.pdfExport = "1";
+  styleEl.textContent = `
+    .pdf-export-host .sheet-render {
+      border: none;
+      border-radius: 0;
+      padding: 1rem 1.25rem;
+      min-height: 0;
+      background: #fff;
+    }
+    .pdf-export-host .anno-textbox,
+    .pdf-export-host .anno-text {
+      border: none !important;
+      outline: none !important;
+      box-shadow: none !important;
+      background: transparent !important;
+    }
+    .pdf-export-host .anno-resize { display: none !important; }
+  `;
+  document.head.appendChild(styleEl);
+  const root = createRoot(container);
+  try {
+    root.render(
+      React.createElement(SheetRenderer, {
+        sheet,
+        numberMode: false,
+        displayKey: sheet.displayKey || sheet.key,
+        annotations: sheet.annotations ?? [],
+        onAnnotationsChange: () => {},
+        texts: sheet.texts ?? [],
+        onTextsChange: () => {},
+        annoRef: sheet.annoRef ?? null,
+      }),
+    );
+    // Let React commit, fonts settle, the AnnotationLayer's ResizeObserver
+    // measure line rects, and the SVG stroke overlay size itself.
+    await new Promise<void>((r) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => r())),
+    );
+    await new Promise<void>((r) => setTimeout(r, 180));
+    const node = container.firstElementChild as HTMLElement | null;
+    if (!node) throw new Error("Off-screen sheet didn't mount");
+    return await toPng(node, {
+      pixelRatio: 2,
+      backgroundColor: "#ffffff",
+      width: node.scrollWidth,
+      height: node.scrollHeight,
+      filter: (n) =>
+        !(n instanceof Element && n.classList?.contains("anno-toolbar")),
+    });
+  } finally {
+    root.unmount();
+    container.remove();
+    styleEl.remove();
+  }
+}
+
+// Slice the source image into per-page bands and add each as its own image,
+// rather than offsetting one tall image (which bleeds into the page margins
+// and duplicates ~24pt of content at every page break).
+function paginateImageInto(
+  doc: jsPDF,
+  img: HTMLImageElement,
+  startNewPage: boolean,
+): boolean {
+  const margin = 24;
+  const contentW = 612 - margin * 2;
+  const contentH = PAGE_H - margin * 2;
+  const scale = contentW / img.naturalWidth; // pt per source px
+  const srcSliceH = contentH / scale;        // source px per full page
+  const src = document.createElement("canvas");
+  src.width = img.naturalWidth;
+  src.height = img.naturalHeight;
+  src.getContext("2d")!.drawImage(img, 0, 0);
+  const pages = Math.max(1, Math.ceil(img.naturalHeight / srcSliceH));
+  for (let i = 0; i < pages; i++) {
+    const yStart = i * srcSliceH;
+    const sliceH = Math.min(srcSliceH, img.naturalHeight - yStart);
+    const slice = document.createElement("canvas");
+    slice.width = img.naturalWidth;
+    slice.height = Math.max(1, Math.round(sliceH));
+    slice.getContext("2d")!.drawImage(src, 0, -yStart);
+    const url = slice.toDataURL("image/png");
+    const drawH = sliceH * scale; // ≤ contentH
+    if (startNewPage || i > 0) doc.addPage();
+    startNewPage = true;
+    doc.addImage(url, "PNG", margin, margin, contentW, drawH);
+  }
+  return startNewPage;
+}
+
+/** Per-song download that matches the editor preview (annotations, key,
+ *  formatting) and embeds the lossless payload — the rendered analogue of
+ *  the older text-based `exportSongPdf`. */
+export async function exportSongRenderedPdf(sheet: ChordSheet): Promise<void> {
+  const dataUrl = await renderSheetToPng(sheet);
+  const img = await loadImage(dataUrl);
+  const doc = newDoc();
+  paginateImageInto(doc, img, false);
+  doc.setProperties({
+    title: sheet.title,
+    subject: "Chord sheet",
+    keywords: encodePayload({ v: 1, kind: "song", sheet }),
+  });
+  triggerDownload(doc, `${safeName(sheet.title)}.pdf`);
+}
+
+/** Set download = each song captured the same way an individual download is,
+ *  concatenated into one PDF (with page breaks between songs). Embeds the
+ *  full set payload for lossless reimport. */
+export async function exportSetRenderedPdf(
+  name: string,
+  sheets: ChordSheet[],
+): Promise<void> {
+  const doc = newDoc();
+  let started = false;
+  for (const sheet of sheets) {
+    const dataUrl = await renderSheetToPng(sheet);
+    const img = await loadImage(dataUrl);
+    started = paginateImageInto(doc, img, started);
+  }
+  if (!started) {
+    doc.setFontSize(12);
+    doc.text(`Set "${name}" (empty)`, 24, 44);
+  }
+  doc.setProperties({
+    title: name,
+    subject: "Chord-sheet set",
+    keywords: encodePayload({ v: 1, kind: "set", name, sheets }),
+  });
+  triggerDownload(doc, `${safeName(name)}.pdf`);
 }

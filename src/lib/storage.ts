@@ -80,6 +80,17 @@ export function saveSheet(sheet: ChordSheet) {
   write(s);
 }
 
+/** Patch a stored sheet's fields without touching the rest (used for the
+ *  per-song display-key persistence so we don't have to write through the
+ *  editor's full Save). */
+export function updateSheet(id: string, patch: Partial<ChordSheet>) {
+  const s = read();
+  const idx = s.sheets.findIndex((x) => x.id === id);
+  if (idx < 0) return;
+  s.sheets[idx] = { ...s.sheets[idx], ...patch, updatedAt: Date.now() };
+  write(s);
+}
+
 export function deleteSheet(id: string) {
   const s = read();
   s.sheets = s.sheets.filter((x) => x.id !== id);

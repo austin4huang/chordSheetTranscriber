@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Stroke, TextNote } from "../lib/types";
 import "./AnnotationLayer.css";
 
@@ -16,6 +16,11 @@ interface Props {
   onChange: (next: Stroke[]) => void;
   texts: TextNote[];
   onTextsChange: (next: TextNote[]) => void;
+  /** Reference content size the stored coordinates are in. When null, the
+   *  layer uses the current rendered size as the reference (identity scale)
+   *  and seeds it via `onRefSize` the first time something is authored. */
+  refSize?: { w: number; h: number } | null;
+  onRefSize?: (ref: { w: number; h: number }) => void;
 }
 
 const CursorIcon = (
@@ -30,13 +35,6 @@ const EraserIcon = (
     <path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21" />
     <path d="M22 21H7" />
     <path d="m5 11 9 9" />
-  </svg>
-);
-
-const MoveIcon = (
-  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
-    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M12 2v20M2 12h20M12 2l-3 3M12 2l3 3M12 22l-3-3M12 22l3-3M2 12l3-3M2 12l3 3M22 12l-3-3M22 12l-3 3" />
   </svg>
 );
 
@@ -80,18 +78,36 @@ interface TextBoxProps {
   eraser: boolean;
   move: boolean;
   pointerEvents: "auto" | "none";
+  /** Added to note.x/note.y for display, so a box anchored to a line tracks
+   *  that line's current position on resize/reflow. */
+  offsetX: number;
+  offsetY: number;
+  /** Screen-px → reference-space divisors for move/resize deltas. */
+  scaleX: number;
+  scaleY: number;
   onText: (text: string) => void;
   onResize: (w?: number, h?: number) => void;
   onMove: (x: number, y: number) => void;
   onEdit: () => void;
+  /** Double-click shortcut: switch to the Text tool and start editing this
+   *  box. */
+  onActivateText: () => void;
   onErase: () => void;
   onBlur: () => void;
 }
 
 function TextBox({
   note, editing, eraser, move, pointerEvents,
-  onText, onResize, onMove, onEdit, onErase, onBlur,
+  offsetX, offsetY, scaleX, scaleY,
+  onText, onResize, onMove, onEdit, onActivateText, onErase, onBlur,
 }: TextBoxProps) {
+  const textAreaRef = useRef<HTMLTextAreaElement>(null);
+  // Focus the textarea whenever this box becomes the editing target (e.g.
+  // after a double-click promoted it from cursor-mode to the text tool).
+  // `autoFocus` only fires on first mount, so a state-driven focus is needed.
+  useEffect(() => {
+    if (editing) textAreaRef.current?.focus();
+  }, [editing]);
   const boxRef = useRef<HTMLDivElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
   const min = useRef({ w: 0, h: 0 });
@@ -122,8 +138,14 @@ function TextBox({
   };
   const onHandleMove = (e: React.PointerEvent) => {
     if (!drag.current) return;
-    const w = Math.max(min.current.w, drag.current.w + (e.clientX - drag.current.x));
-    const h = Math.max(min.current.h, drag.current.h + (e.clientY - drag.current.y));
+    const w = Math.max(
+      min.current.w,
+      drag.current.w + (e.clientX - drag.current.x) / scaleX,
+    );
+    const h = Math.max(
+      min.current.h,
+      drag.current.h + (e.clientY - drag.current.y) / scaleY,
+    );
     onResize(w, h);
   };
   const onHandleUp = (e: React.PointerEvent) => {
@@ -137,10 +159,30 @@ function TextBox({
     }
   };
 
-  // Drag the whole box to reposition it (Move tool).
+  // Drag the whole box to reposition it (cursor-mode).
   const moveDrag = useRef<{ x: number; y: number; nx: number; ny: number } | null>(null);
+  // Manual double-click detection — `e.detail` on PointerEvent isn't reliable
+  // across browsers and breaks after pointer-capture, so we just compare
+  // timestamps + positions ourselves. ~450 ms / ~14 px is comfortable.
+  const lastClick = useRef<{ t: number; x: number; y: number } | null>(null);
   const onBoxDown = (e: React.PointerEvent) => {
     if (!move) return;
+    const now = performance.now();
+    const last = lastClick.current;
+    if (
+      last &&
+      now - last.t < 450 &&
+      Math.abs(e.clientX - last.x) < 14 &&
+      Math.abs(e.clientY - last.y) < 14
+    ) {
+      // Double-click → switch to the Text tool and start editing this box.
+      lastClick.current = null;
+      e.preventDefault();
+      e.stopPropagation();
+      onActivateText();
+      return;
+    }
+    lastClick.current = { t: now, x: e.clientX, y: e.clientY };
     e.preventDefault();
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -149,8 +191,8 @@ function TextBox({
   const onBoxMove = (e: React.PointerEvent) => {
     if (!moveDrag.current) return;
     onMove(
-      moveDrag.current.nx + (e.clientX - moveDrag.current.x),
-      moveDrag.current.ny + (e.clientY - moveDrag.current.y),
+      moveDrag.current.nx + (e.clientX - moveDrag.current.x) / scaleX,
+      moveDrag.current.ny + (e.clientY - moveDrag.current.y) / scaleY,
     );
   };
   const onBoxUp = (e: React.PointerEvent) => {
@@ -163,7 +205,7 @@ function TextBox({
     <div
       ref={boxRef}
       className={`anno-textbox${move ? " is-move" : ""}`}
-      style={{ left: note.x, top: note.y, pointerEvents }}
+      style={{ left: note.x + offsetX, top: note.y + offsetY, pointerEvents }}
       onPointerDown={onBoxDown}
       onPointerMove={onBoxMove}
       onPointerUp={onBoxUp}
@@ -178,6 +220,7 @@ function TextBox({
         {note.text.length ? note.text : " "}
       </div>
       <textarea
+        ref={textAreaRef}
         className="anno-text"
         value={note.text}
         autoFocus={editing}
@@ -205,6 +248,30 @@ function TextBox({
   );
 }
 
+type LineRect = { left: number; top: number; width: number; height: number };
+
+function sameRects(
+  a: Map<number, LineRect>,
+  b: Map<number, LineRect>,
+): boolean {
+  if (a.size !== b.size) return false;
+  // Tolerate sub-pixel jitter from getBoundingClientRect so layout-stable
+  // re-renders don't keep flipping the rects map.
+  const EPS = 0.5;
+  for (const [k, r] of a) {
+    const o = b.get(k);
+    if (
+      !o ||
+      Math.abs(o.left - r.left) > EPS ||
+      Math.abs(o.top - r.top) > EPS ||
+      Math.abs(o.width - r.width) > EPS ||
+      Math.abs(o.height - r.height) > EPS
+    )
+      return false;
+  }
+  return true;
+}
+
 function strokePath(s: Stroke): string {
   const p = s.points;
   if (p.length < 2) return "";
@@ -213,9 +280,22 @@ function strokePath(s: Stroke): string {
   return d;
 }
 
-export function AnnotationLayer({ annotations, onChange, texts, onTextsChange }: Props) {
+export function AnnotationLayer({
+  annotations,
+  onChange,
+  texts,
+  onTextsChange,
+  refSize,
+  onRefSize,
+}: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
+  // Bounding rects (in host-relative px) of each line in the rendered sheet,
+  // keyed by `sheet.lines` index. Used to anchor text boxes to a line so they
+  // reflow with it when the layout changes.
+  const [lineRects, setLineRects] = useState<
+    Map<number, { left: number; top: number; width: number; height: number }>
+  >(new Map());
   const [tool, setTool] = useState<Tool>("off");
   const [color, setColor] = useState(COLORS[0]);
   const [fontSize, setFontSize] = useState(16);
@@ -245,28 +325,175 @@ export function AnnotationLayer({ annotations, onChange, texts, onTextsChange }:
     gripDrag.current = null;
   };
 
+  // Effective reference (the coordinate space stored annotations live in).
+  // When a sheet has no ref yet, we render with identity scale and seed the
+  // ref the moment something is authored (or on mount if legacy annotations
+  // already exist — best-guess but locks in the current position).
+  const ref =
+    refSize && refSize.w > 0 && refSize.h > 0 ? refSize : size;
+  const seedRefIfNeeded = useCallback(() => {
+    if (!refSize && size.w > 0 && size.h > 0 && onRefSize) {
+      onRefSize({ w: size.w, h: size.h });
+    }
+  }, [refSize, size.w, size.h, onRefSize]);
+  // Legacy sheets that already have annotations/text but no stored ref:
+  // adopt the current rendered size so future resizes scale from here.
+  useEffect(() => {
+    if (
+      !refSize &&
+      size.w > 0 &&
+      (annotations.length > 0 || texts.length > 0) &&
+      onRefSize
+    ) {
+      onRefSize({ w: size.w, h: size.h });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [size.w, size.h]);
+
   useLayoutEffect(() => {
     const host = svgRef.current?.parentElement;
     if (!host) return;
-    const measure = () =>
+    const measure = () => {
       setSize((prev) => {
         const w = host.scrollWidth;
         const h = host.scrollHeight;
         return prev.w === w && prev.h === h ? prev : { w, h };
       });
+      const hostRect = host.getBoundingClientRect();
+      const next = new Map<
+        number,
+        { left: number; top: number; width: number; height: number }
+      >();
+      host
+        .querySelectorAll<HTMLElement>("[data-line-index]")
+        .forEach((el) => {
+          const r = el.getBoundingClientRect();
+          const idx = Number(el.dataset.lineIndex);
+          if (Number.isFinite(idx)) {
+            next.set(idx, {
+              left: r.left - hostRect.left,
+              top: r.top - hostRect.top,
+              width: r.width,
+              height: r.height,
+            });
+          }
+        });
+      setLineRects((prev) => (sameRects(prev, next) ? prev : next));
+    };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(host);
+    // Also observe the multi-column body — its height changes on reflow even
+    // when the host width doesn't.
+    const body = host.querySelector(".sr-body");
+    if (body) ro.observe(body);
     return () => ro.disconnect();
   }, []);
 
-  const point = useCallback((e: { clientX: number; clientY: number }): [number, number] => {
-    const r = svgRef.current!.getBoundingClientRect();
-    return [
-      Math.round((e.clientX - r.left) * 10) / 10,
-      Math.round((e.clientY - r.top) * 10) / 10,
-    ];
-  }, []);
+
+  // Convert a client (screen) coordinate into the SVG's user-space, which is
+  // the reference coordinate space the stored strokes live in. Using the
+  // SVG's own CTM means new strokes are recorded in ref-space regardless of
+  // current rendered size — they line up with old strokes automatically.
+  const point = useCallback(
+    (e: { clientX: number; clientY: number }): [number, number] => {
+      const svg = svgRef.current!;
+      const ctm = svg.getScreenCTM();
+      if (!ctm) {
+        const r = svg.getBoundingClientRect();
+        return [
+          Math.round((e.clientX - r.left) * 10) / 10,
+          Math.round((e.clientY - r.top) * 10) / 10,
+        ];
+      }
+      const pt = svg.createSVGPoint();
+      pt.x = e.clientX;
+      pt.y = e.clientY;
+      const p = pt.matrixTransform(ctm.inverse());
+      return [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10];
+    },
+    [],
+  );
+
+  // Pointer coords in the host (.sheet-render) box's current px — used for
+  // anchoring text boxes, which live in current-size space (so they can be
+  // attached to a line whose position is also measured in host px).
+  const pointHost = useCallback(
+    (e: { clientX: number; clientY: number }): [number, number] => {
+      const host = svgRef.current?.parentElement;
+      if (!host) return [0, 0];
+      const r = host.getBoundingClientRect();
+      return [
+        Math.round((e.clientX - r.left) * 10) / 10,
+        Math.round((e.clientY - r.top) * 10) / 10,
+      ];
+    },
+    [],
+  );
+
+  // Find the line whose rect contains (x, y), or the closest by vertical
+  // center if none does (so a click in the gutter still anchors usefully).
+  const findLineAt = useCallback(
+    (x: number, y: number): number | null => {
+      let bestIdx: number | null = null;
+      let bestDy = Infinity;
+      for (const [idx, r] of lineRects) {
+        if (
+          x >= r.left &&
+          x <= r.left + r.width &&
+          y >= r.top &&
+          y <= r.top + r.height
+        ) {
+          return idx;
+        }
+        const cy = r.top + r.height / 2;
+        const dy = Math.abs(y - cy);
+        if (dy < bestDy) {
+          bestDy = dy;
+          bestIdx = idx;
+        }
+      }
+      return bestIdx;
+    },
+    [lineRects],
+  );
+
+  // One-time migration: any text box without an anchor — drawn before this
+  // feature existed — gets attached to the line under its current position
+  // and re-saved with relative coords, so future reflows track it. Gated
+  // by a ref so it runs at most once per mount (any later resize will not
+  // re-anchor an already-anchored box and won't shift its stored coords).
+  const migratedRef = useRef(false);
+  useEffect(() => {
+    if (migratedRef.current) return;
+    if (lineRects.size === 0 || size.w === 0 || size.h === 0) return;
+    if (!texts.some((t) => !t.anchor)) {
+      migratedRef.current = true;
+      return;
+    }
+    // Convert stored coords (which may be in the previous viewBox/ref space)
+    // into host px so we look up the right line.
+    const sx = ref.w > 0 ? size.w / ref.w : 1;
+    const sy = ref.h > 0 ? size.h / ref.h : 1;
+    const migrated = texts.map((t) => {
+      if (t.anchor) return t;
+      const vx = t.x * sx;
+      const vy = t.y * sy;
+      const idx = findLineAt(vx, vy);
+      if (idx == null) return t;
+      const r = lineRects.get(idx);
+      if (!r) return t;
+      return {
+        ...t,
+        x: vx - r.left,
+        y: vy - r.top,
+        anchor: { lineIndex: idx },
+      };
+    });
+    migratedRef.current = true;
+    if (migrated.some((t, i) => t !== texts[i])) onTextsChange(migrated);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lineRects]);
 
   const eraseAt = useCallback(
     (x: number, y: number) => {
@@ -303,24 +530,49 @@ export function AnnotationLayer({ annotations, onChange, texts, onTextsChange }:
   const strokeDrag = useRef<{ index: number; x: number; y: number; pts: number[] } | null>(null);
 
   const onDown = (e: React.PointerEvent) => {
-    if (tool === "off") return;
+    // Cursor mode: empty-area clicks pass through (lyric selection); only a
+    // stroke hit captures the pointer to drag that stroke.
+    if (tool === "off") {
+      const [x, y] = point(e);
+      const idx = hitStroke(x, y);
+      if (idx < 0) return;
+      e.preventDefault();
+      svgRef.current!.setPointerCapture(e.pointerId);
+      drawing.current = true;
+      strokeDrag.current = { index: idx, x, y, pts: [...annotations[idx].points] };
+      return;
+    }
     // Prevent the browser's default pointer-down focus handling — otherwise
     // it steals focus back from a freshly-created text box, blurring it
     // while empty so it's instantly removed.
     e.preventDefault();
+    // Lock in the reference size the first time the user actually authors
+    // something, so the new annotation's coords are interpreted in the same
+    // space we'll scale from on later resizes.
+    if (tool === "text" || tool === "pen") seedRefIfNeeded();
     const [x, y] = point(e);
     if (tool === "text") {
+      // Anchor the box to the line under the pointer so it reflows with that
+      // line when columns/layout change. x/y stored are RELATIVE to that
+      // line's top-left in host px (current size).
+      const [hx, hy] = pointHost(e);
+      const lineIndex = findLineAt(hx, hy);
+      const r = lineIndex != null ? lineRects.get(lineIndex) : undefined;
       const id = crypto.randomUUID();
-      onTextsChange([...texts, { id, x, y, text: "", fontSize, color }]);
+      const note: TextNote =
+        lineIndex != null && r
+          ? {
+              id,
+              x: hx - r.left,
+              y: hy - r.top,
+              text: "",
+              fontSize,
+              color,
+              anchor: { lineIndex },
+            }
+          : { id, x, y, text: "", fontSize, color };
+      onTextsChange([...texts, note]);
       setEditingId(id);
-      return;
-    }
-    if (tool === "move") {
-      const idx = hitStroke(x, y);
-      if (idx < 0) return;
-      svgRef.current!.setPointerCapture(e.pointerId);
-      drawing.current = true;
-      strokeDrag.current = { index: idx, x, y, pts: [...annotations[idx].points] };
       return;
     }
     svgRef.current!.setPointerCapture(e.pointerId);
@@ -332,7 +584,7 @@ export function AnnotationLayer({ annotations, onChange, texts, onTextsChange }:
   const onMove = (e: React.PointerEvent) => {
     if (!drawing.current) return;
     const [x, y] = point(e);
-    if (tool === "move" && strokeDrag.current) {
+    if (strokeDrag.current) {
       const sd = strokeDrag.current;
       const dx = x - sd.x;
       const dy = y - sd.y;
@@ -374,8 +626,12 @@ export function AnnotationLayer({ annotations, onChange, texts, onTextsChange }:
     onTextsChange([]);
   };
 
-  const interactive = tool !== "off";
-  const textHit = tool === "text" || tool === "eraser" || tool === "move";
+  // The SVG always accepts events so a click on a painted stroke can start a
+  // drag in cursor mode; empty SVG areas pass through to the lyrics underneath
+  // (we omit the transparent backdrop rect when `tool === "off"`).
+  const interactive = true;
+  // Text boxes need pointer events for all tools except pen drawing.
+  const textHit = tool !== "pen";
   const empty = annotations.length === 0 && texts.length === 0;
 
   return (
@@ -399,11 +655,9 @@ export function AnnotationLayer({ annotations, onChange, texts, onTextsChange }:
         {!collapsed && (
           <>
             <button className={`anno-btn${tool === "off" ? " active" : ""}`}
-              onClick={() => setTool("off")} title="Stop annotating (scroll / select text)"
+              onClick={() => setTool("off")}
+              title="Cursor — select text on empty areas, drag annotations when hovering"
               aria-label="Cursor">{CursorIcon}</button>
-            <button className={`anno-btn${tool === "move" ? " active" : ""}`}
-              onClick={() => setTool("move")} title="Move strokes & text boxes"
-              aria-label="Move">{MoveIcon}</button>
             {COLORS.map((c) => (
               <button key={c}
                 className={`anno-swatch${tool === "pen" && color === c ? " active" : ""}`}
@@ -438,44 +692,80 @@ export function AnnotationLayer({ annotations, onChange, texts, onTextsChange }:
         </button>
       </div>
 
-      <svg ref={svgRef} className="anno-svg" width={size.w} height={size.h}
+      <svg
+        ref={svgRef}
+        className="anno-svg"
+        width={size.w}
+        height={size.h}
+        viewBox={`0 0 ${ref.w || 1} ${ref.h || 1}`}
+        preserveAspectRatio="none"
         style={{
           pointerEvents: interactive ? "auto" : "none",
-          cursor: tool === "eraser" ? "cell" : tool === "text" ? "text" : tool === "move" ? "move" : interactive ? "crosshair" : "default",
+          cursor:
+            tool === "eraser"
+              ? "cell"
+              : tool === "text"
+                ? "text"
+                : tool === "pen"
+                  ? "crosshair"
+                  : "default",
         }}
         onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
-        {/* Transparent backdrop so clicks anywhere (not just on painted
-            strokes) register — an SVG only hit-tests painted pixels. */}
-        <rect x={0} y={0} width={size.w} height={size.h} fill="transparent" />
+        {/* Backdrop catches clicks across empty SVG areas. Omitted in cursor
+            mode so empty-area clicks fall through to the lyrics. */}
+        {tool !== "off" && (
+          <rect x={0} y={0} width={ref.w} height={ref.h} fill="transparent" />
+        )}
         {annotations.map((s, i) => (
           <path key={i} d={strokePath(s)} stroke={s.color} strokeWidth={s.width}
-            fill="none" strokeLinecap="round" strokeLinejoin="round" />
+            fill="none" strokeLinecap="round" strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke"
+            style={tool === "off" ? { cursor: "move" } : undefined} />
         ))}
         {draft && (
           <path d={strokePath(draft)} stroke={draft.color} strokeWidth={draft.width}
-            fill="none" strokeLinecap="round" strokeLinejoin="round" />
+            fill="none" strokeLinecap="round" strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke" />
         )}
       </svg>
 
-      {texts.map((t) => (
-        <TextBox
-          key={t.id}
-          note={t}
-          editing={editingId === t.id}
-          eraser={tool === "eraser"}
-          move={tool === "move"}
-          pointerEvents={textHit ? "auto" : "none"}
-          onText={(text) => updateText(t.id, { text })}
-          onResize={(w, h) => updateText(t.id, { w, h })}
-          onMove={(x, y) => updateText(t.id, { x, y })}
-          onEdit={() => setEditingId(t.id)}
-          onErase={() => removeText(t.id)}
-          onBlur={() => {
-            if (!t.text.trim()) removeText(t.id);
-            setEditingId((cur) => (cur === t.id ? null : cur));
-          }}
-        />
-      ))}
+      {/* Text boxes are positioned per-anchor against the current line rect,
+          so they reflow when the layout changes (e.g., 2-col ↔ 1-col).
+          Unanchored boxes render at their absolute coords until the
+          auto-migration effect attaches them to a line. */}
+      {texts.map((t) => {
+        const r = t.anchor ? lineRects.get(t.anchor.lineIndex) : null;
+        const offX = r ? r.left : 0;
+        const offY = r ? r.top : 0;
+        return (
+          <TextBox
+            key={t.id}
+            note={t}
+            editing={editingId === t.id}
+            eraser={tool === "eraser"}
+            // Cursor mode: text boxes are draggable like the old "move" tool.
+            move={tool === "off"}
+            pointerEvents={textHit ? "auto" : "none"}
+            offsetX={offX}
+            offsetY={offY}
+            scaleX={1}
+            scaleY={1}
+            onText={(text) => updateText(t.id, { text })}
+            onResize={(w, h) => updateText(t.id, { w, h })}
+            onMove={(x, y) => updateText(t.id, { x, y })}
+            onEdit={() => setEditingId(t.id)}
+            onActivateText={() => {
+              setTool("text");
+              setEditingId(t.id);
+            }}
+            onErase={() => removeText(t.id)}
+            onBlur={() => {
+              if (!t.text.trim()) removeText(t.id);
+              setEditingId((cur) => (cur === t.id ? null : cur));
+            }}
+          />
+        );
+      })}
     </>
   );
 }
