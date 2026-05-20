@@ -56,6 +56,13 @@ export function SheetList({ onOpen, askConflict }: Props) {
   >(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const restoreRef = useRef<HTMLInputElement>(null);
+  // Bulk-selection of songs in the "All songs" list, for batch add-to-set
+  // or delete. `selectionAnchor` is the last id the user clicked without
+  // shift, so a subsequent shift+click can extend the range from there.
+  const [selectedSheets, setSelectedSheets] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const selectionAnchor = useRef<string | null>(null);
 
   const refresh = () => {
     setSheets(listSheets());
@@ -326,6 +333,70 @@ export function SheetList({ onOpen, askConflict }: Props) {
   const onDelete = (id: string) => {
     if (!confirm("Delete this chord sheet? It will also be removed from any sets.")) return;
     deleteSheet(id);
+    refresh();
+  };
+
+  // --- Bulk selection ------------------------------------------------------
+
+  const clearSelection = () => {
+    setSelectedSheets(new Set());
+    selectionAnchor.current = null;
+  };
+
+  const handleCheckboxClick = (id: string, shift: boolean) => {
+    const willCheck = !selectedSheets.has(id);
+    if (shift && selectionAnchor.current && selectionAnchor.current !== id) {
+      // Range select: every visible sheet from anchor to id becomes
+      // `willCheck` (matches the just-clicked checkbox's new state).
+      const ids = visibleSheets.map((s) => s.id);
+      const aIdx = ids.indexOf(selectionAnchor.current);
+      const bIdx = ids.indexOf(id);
+      if (aIdx >= 0 && bIdx >= 0) {
+        const [lo, hi] = aIdx < bIdx ? [aIdx, bIdx] : [bIdx, aIdx];
+        const next = new Set(selectedSheets);
+        for (let i = lo; i <= hi; i++) {
+          if (willCheck) next.add(ids[i]);
+          else next.delete(ids[i]);
+        }
+        setSelectedSheets(next);
+        return;
+      }
+    }
+    // Plain toggle.
+    const next = new Set(selectedSheets);
+    if (willCheck) next.add(id);
+    else next.delete(id);
+    setSelectedSheets(next);
+    selectionAnchor.current = id;
+  };
+
+  const selectAllVisible = () => {
+    setSelectedSheets(new Set(visibleSheets.map((s) => s.id)));
+  };
+
+  const addSelectedToSet = (setId: string) => {
+    const set = sets.find((s) => s.id === setId);
+    if (!set || selectedSheets.size === 0) return;
+    // Preserve current order; append the not-yet-present selected ids.
+    const present = new Set(set.sheetIds);
+    const toAdd = [...selectedSheets].filter((id) => !present.has(id));
+    if (toAdd.length === 0) return;
+    saveSet({ ...set, sheetIds: [...set.sheetIds, ...toAdd] });
+    setSets(listSets());
+  };
+
+  const deleteSelected = () => {
+    const n = selectedSheets.size;
+    if (n === 0) return;
+    if (
+      !confirm(
+        `Delete ${n} chord sheet${n === 1 ? "" : "s"}? ` +
+          "They will also be removed from any sets.",
+      )
+    )
+      return;
+    for (const id of selectedSheets) deleteSheet(id);
+    clearSelection();
     refresh();
   };
 
@@ -842,7 +913,6 @@ export function SheetList({ onOpen, askConflict }: Props) {
                       >
                         <span className="set-caret">{open ? "▾" : "▸"}</span>
                         <span className="set-name">{set.name}</span>
-                        <span className="set-count">{set.sheetIds.length} songs</span>
                       </button>
                     )}
                     {!(renaming?.kind === "set" && renaming.id === set.id) && (
@@ -855,6 +925,9 @@ export function SheetList({ onOpen, askConflict }: Props) {
                         >
                           <EditIcon size={16} />
                         </button>
+                        <span className="set-count">
+                          {set.sheetIds.length} songs
+                        </span>
                         <span className="row-spacer" />
                       </>
                     )}
@@ -1004,6 +1077,56 @@ export function SheetList({ onOpen, askConflict }: Props) {
             </select>
           </label>
         </div>
+        {selectedSheets.size > 0 && (
+          <div className="bulk-bar" role="toolbar" aria-label="Bulk actions">
+            <span className="bulk-count">
+              {selectedSheets.size} selected
+            </span>
+            {sets.length > 0 && (
+              <select
+                className="bulk-add-to-set"
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) addSelectedToSet(e.target.value);
+                  e.target.value = "";
+                }}
+                title="Add selected songs to a set"
+              >
+                <option value="">+ Add to set…</option>
+                {sets.map((set) => (
+                  <option key={set.id} value={set.id}>
+                    {set.name}
+                  </option>
+                ))}
+              </select>
+            )}
+            <button
+              className="ghost-btn bulk-select-all"
+              onClick={selectAllVisible}
+              disabled={
+                visibleSheets.length > 0 &&
+                visibleSheets.every((s) => selectedSheets.has(s.id))
+              }
+              title="Select every song currently shown"
+            >
+              Select all
+            </button>
+            <button
+              className="ghost-btn bulk-delete"
+              onClick={deleteSelected}
+              title="Delete the selected songs"
+            >
+              <TrashIcon /> Delete
+            </button>
+            <button
+              className="ghost-btn"
+              onClick={clearSelection}
+              title="Clear the selection"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
         {sheets.length === 0 ? (
           <div className="empty">
             <div className="empty-icon" aria-hidden="true">🎵</div>
@@ -1024,7 +1147,29 @@ export function SheetList({ onOpen, askConflict }: Props) {
         ) : (
           <ul className="sheets">
             {visibleSheets.map((s) => (
-              <li key={s.id} className="sheet-item">
+              <li
+                key={s.id}
+                className={`sheet-item${selectedSheets.has(s.id) ? " is-selected" : ""}`}
+              >
+                <input
+                  type="checkbox"
+                  className="sheet-checkbox"
+                  checked={selectedSheets.has(s.id)}
+                  onClick={(e) => {
+                    // Don't preventDefault: a preventDefault on a click event
+                    // for a controlled checkbox leaves React's reconciler
+                    // out of sync with the visual state (the box appears to
+                    // lag one click behind). The browser's default toggle
+                    // matches the new state we compute below, so they stay
+                    // in lockstep.
+                    e.stopPropagation();
+                    handleCheckboxClick(s.id, e.shiftKey);
+                  }}
+                  onChange={() => {
+                    /* state is driven by onClick so we can read shiftKey */
+                  }}
+                  aria-label={`Select ${s.title}`}
+                />
                 {renaming?.kind === "song" && renaming.id === s.id ? (
                   <form
                     className="rename-form sheet-rename"

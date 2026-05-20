@@ -17,9 +17,12 @@ export interface Stroke {
 }
 
 // A free-positioned text annotation. When `anchor` is set, x/y are pixels
-// relative to that line's top-left, so the box reflows with the line on
-// resize / column changes. Without `anchor` they're absolute pixels in the
-// sheet's content box (legacy; auto-migrated to anchored on first render).
+// relative to the anchor element's top-left, so the box reflows with the
+// anchor on resize / column changes. Anchor preference: the chord/lyric
+// `tokenIndex` within a chordpro line (tracks the *specific* pair as the
+// line wraps internally); falls back to whole-line anchor for non-chordpro
+// lines (section/blank/chord-only). Without `anchor` they're absolute
+// pixels in the sheet's content box (legacy; auto-migrated on first render).
 export interface TextNote {
   id: string;
   x: number;
@@ -29,7 +32,7 @@ export interface TextNote {
   color: string;
   w?: number;          // manual box size; unset = auto-fit to text
   h?: number;
-  anchor?: { lineIndex: number };
+  anchor?: { lineIndex: number; tokenIndex?: number };
 }
 
 export interface ChordSheet {

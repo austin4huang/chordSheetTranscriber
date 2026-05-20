@@ -287,6 +287,57 @@
   border-radius: 8px;
   overflow: hidden;
 }
+.sheet-item.is-selected {
+  border-color: #2a6cdc;
+  background: #f0f5ff;
+}
+.sheet-item .sheet-checkbox {
+  align-self: center;
+  margin: 0 0.5rem 0 0.75rem;
+  width: 1rem;
+  height: 1rem;
+  cursor: pointer;
+  flex: 0 0 auto;
+  accent-color: #2a6cdc;
+}
+
+/* Bulk-actions bar shown when at least one song is checked. */
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0.75rem;
+  margin: 0 0 0.5rem;
+  background: #eef4ff;
+  border: 1px solid #c7dbff;
+  border-radius: 8px;
+}
+.bulk-bar .bulk-count {
+  font-weight: 600;
+  color: #1c4fa1;
+  font-size: 0.9rem;
+  margin-right: 0.25rem;
+}
+.bulk-bar .bulk-add-to-set {
+  background: #fff;
+  border: 1px solid #c7d2e6;
+  border-radius: 6px;
+  padding: 0.3rem 0.4rem;
+  font-size: 0.85rem;
+  color: #2a6cdc;
+  cursor: pointer;
+  field-sizing: content;
+}
+.bulk-bar .bulk-delete {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: #c33;
+  border-color: #e9c2c0;
+}
+.bulk-bar .bulk-delete:hover { background: #fff0f0; }
+.bulk-bar .bulk-delete svg { margin-right: 0 !important; }
 .sheet-item .open {
   flex: 1;
   min-width: 0;
