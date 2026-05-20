@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { SheetList } from "./components/SheetList";
 import { SheetEditor } from "./components/SheetEditor";
-import { getSheet, getSet } from "./lib/storage";
+import { getSheet, getSet, whenStorageReady } from "./lib/storage";
 import { initPersistence } from "./lib/persist";
 import "./App.css";
 
@@ -25,6 +25,9 @@ export default function App() {
   const [presenting, setPresenting] = useState(false);
   const [split, setSplit] = useState(50);
   const [annoToolbarCollapsed, setAnnoToolbarCollapsed] = useState(false);
+  // Library is loaded asynchronously from IndexedDB on first paint; gate the
+  // app on hydration so we never render an "empty library" flash.
+  const [storageReady, setStorageReady] = useState(false);
 
   // Conflict modal lives here so both the list (import) and the editor
   // (save) can prompt through the same UI.
@@ -46,11 +49,16 @@ export default function App() {
     setConflict(null);
   };
 
-  // Request persistent storage and adopt a linked device folder (if any)
-  // once per app load.
+  // Hydrate the in-memory library from IndexedDB, request persistent storage,
+  // and adopt a linked device folder (if any) — all once per app load.
   useEffect(() => {
+    void whenStorageReady().then(() => setStorageReady(true));
     void initPersistence();
   }, []);
+
+  if (!storageReady) {
+    return <div className="app-loading">Loading your library…</div>;
+  }
 
   let main;
   if (view.kind === "list") {

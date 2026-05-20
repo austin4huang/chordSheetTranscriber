@@ -10,23 +10,24 @@
 // localStorage stays the synchronous source of truth the UI reads; this
 // layer mirrors every write outward and can replace the store on load.
 
-import { onStoreWrite, readStore, replaceStore, type Stored } from "./storage";
+import {
+  getDb,
+  onStoreWrite,
+  readStore,
+  replaceStore,
+  whenStorageReady,
+  type Stored,
+} from "./storage";
 
 const LIBRARY_FILENAME = "chordsheets-library.json";
 const LIBRARY_CHANGED_EVENT = "cs-library-changed";
 
 // --- tiny IndexedDB key/value (just for the folder handle) -----------------
+// Uses the shared connection from storage.ts so the schema upgrade is
+// coordinated in one place.
 
-function idb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open("chordsheets", 1);
-    req.onupgradeneeded = () => req.result.createObjectStore("kv");
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
 async function idbGet<T>(key: string): Promise<T | undefined> {
-  const db = await idb();
+  const db = await getDb();
   return new Promise((resolve, reject) => {
     const r = db.transaction("kv").objectStore("kv").get(key);
     r.onsuccess = () => resolve(r.result as T | undefined);
@@ -34,7 +35,7 @@ async function idbGet<T>(key: string): Promise<T | undefined> {
   });
 }
 async function idbSet(key: string, val: unknown): Promise<void> {
-  const db = await idb();
+  const db = await getDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction("kv", "readwrite");
     tx.objectStore("kv").put(val, key);
@@ -43,7 +44,7 @@ async function idbSet(key: string, val: unknown): Promise<void> {
   });
 }
 async function idbDel(key: string): Promise<void> {
-  const db = await idb();
+  const db = await getDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction("kv", "readwrite");
     tx.objectStore("kv").delete(key);
@@ -235,6 +236,7 @@ export async function restoreBackup(file: File): Promise<void> {
 let flushTimer: number | null = null;
 
 export async function initPersistence(): Promise<void> {
+  await whenStorageReady();
   await requestPersistentStorage();
 
   onStoreWrite((s) => {

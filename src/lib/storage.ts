@@ -1,7 +1,16 @@
 import type { ChordSheet, SheetLine } from "./types";
 import { parseChord } from "./nashville";
 
-const KEY = "musicApp.sheets.v1";
+// The library lives in IndexedDB (object stores `sheets` and `sets`, keyed
+// by `id`). At startup we hydrate everything into an in-memory cache; all
+// public read APIs serve that cache synchronously, and writes update the
+// cache plus persist the single changed record back to IDB in the
+// background. localStorage is still read once on first run to migrate any
+// pre-IDB library into IDB, then removed.
+
+const DB_NAME = "chordsheets";
+const DB_VERSION = 2;
+const LEGACY_LS_KEY = "musicApp.sheets.v1";
 
 // A Set is just an ordered list of references into the global sheet database;
 // the sheets themselves stay shared, so editing one updates it everywhere.
@@ -18,89 +27,265 @@ export interface Stored {
   sets?: SongSet[];
 }
 
-function read(): Stored {
+// --- Shared IndexedDB handle ----------------------------------------------
+
+let _db: Promise<IDBDatabase> | null = null;
+
+/** Shared connection to the app's IndexedDB. Other modules (persist.ts)
+ *  also open through here so the schema upgrade happens once. */
+export function getDb(): Promise<IDBDatabase> {
+  if (_db) return _db;
+  _db = new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      // v1: introduced by the durable-storage layer for the folder handle.
+      if (!db.objectStoreNames.contains("kv")) db.createObjectStore("kv");
+      // v2: per-record library storage.
+      if (!db.objectStoreNames.contains("sheets"))
+        db.createObjectStore("sheets", { keyPath: "id" });
+      if (!db.objectStoreNames.contains("sets"))
+        db.createObjectStore("sets", { keyPath: "id" });
+    };
+    // Fires when another connection (e.g. an older HMR module instance,
+    // or a different tab on an older version) is preventing the upgrade.
+    // Without this the open request hangs silently forever.
+    req.onblocked = () => {
+      console.warn(
+        "IndexedDB upgrade blocked — close other tabs of this app and reload.",
+      );
+    };
+    req.onsuccess = () => {
+      const db = req.result;
+      // If another tab later opens an even newer version, close so they can
+      // upgrade instead of getting blocked by us.
+      db.onversionchange = () => {
+        db.close();
+        _db = null;
+      };
+      resolve(db);
+    };
+    req.onerror = () => reject(req.error);
+  });
+  return _db;
+}
+
+function readAll<T>(db: IDBDatabase, store: string): Promise<T[]> {
+  return new Promise((resolve, reject) => {
+    const r = db.transaction(store).objectStore(store).getAll();
+    r.onsuccess = () => resolve(r.result as T[]);
+    r.onerror = () => reject(r.error);
+  });
+}
+
+function idbPut(db: IDBDatabase, store: string, value: unknown): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(store, "readwrite");
+    tx.objectStore(store).put(value);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+function idbDelete(db: IDBDatabase, store: string, key: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(store, "readwrite");
+    tx.objectStore(store).delete(key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+function idbBulkPut(
+  db: IDBDatabase,
+  store: string,
+  values: unknown[],
+): Promise<void> {
+  if (!values.length) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(store, "readwrite");
+    const os = tx.objectStore(store);
+    for (const v of values) os.put(v);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+function idbReplaceAll(
+  db: IDBDatabase,
+  store: string,
+  values: unknown[],
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(store, "readwrite");
+    const os = tx.objectStore(store);
+    os.clear();
+    for (const v of values) os.put(v);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// --- Cache + hydration ----------------------------------------------------
+
+interface Cache {
+  sheets: ChordSheet[];
+  sets: SongSet[];
+}
+const cache: Cache = { sheets: [], sets: [] };
+let writeListener: ((s: Stored) => void) | null = null;
+let _readyPromise: Promise<void> | null = null;
+
+function readLegacyLocalStorage(): Stored | null {
   try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return { sheets: [], sets: [] };
+    const raw = localStorage.getItem(LEGACY_LS_KEY);
+    if (!raw) return null;
     const parsed = JSON.parse(raw) as Stored;
-    return { sheets: parsed.sheets ?? [], sets: parsed.sets ?? [] };
+    if (!parsed || !Array.isArray(parsed.sheets)) return null;
+    return { sheets: parsed.sheets, sets: parsed.sets ?? [] };
   } catch {
-    return { sheets: [], sets: [] };
+    return null;
   }
 }
 
-// Durable-storage layer subscribes here: every mutation funnels through
-// write(), so this is the single place to mirror the library to IndexedDB
-// and a linked device folder.
-let writeListener: ((s: Stored) => void) | null = null;
+async function hydrate(): Promise<void> {
+  try {
+    const db = await getDb();
+    const sheets = await readAll<ChordSheet>(db, "sheets");
+    const sets = await readAll<SongSet>(db, "sets");
+    if (sheets.length === 0 && sets.length === 0) {
+      // First run, or empty IDB: migrate from the legacy localStorage blob
+      // if one exists. Otherwise start empty.
+      const legacy = readLegacyLocalStorage();
+      if (legacy && (legacy.sheets.length || (legacy.sets ?? []).length)) {
+        cache.sheets = legacy.sheets;
+        cache.sets = legacy.sets ?? [];
+        await idbBulkPut(db, "sheets", cache.sheets);
+        await idbBulkPut(db, "sets", cache.sets);
+        try {
+          localStorage.removeItem(LEGACY_LS_KEY);
+        } catch {
+          /* clearing the legacy blob is best-effort */
+        }
+      }
+    } else {
+      cache.sheets = sheets;
+      cache.sets = sets;
+    }
+  } catch (e) {
+    console.error("Failed to hydrate storage from IndexedDB:", e);
+    // Fall back to whatever's in the cache (empty by default).
+  }
+}
+
+/** Resolves once the in-memory cache has been hydrated from IDB. Render
+ *  blocking on this avoids flashing an empty library on startup. */
+export function whenStorageReady(): Promise<void> {
+  if (!_readyPromise) _readyPromise = hydrate();
+  return _readyPromise;
+}
+
+// During development, close the IDB connection when the module is replaced
+// so a schema bump on the next reload doesn't get blocked by this tab's
+// lingering older connection.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    void _db?.then((db) => db.close()).catch(() => {});
+    _db = null;
+    _readyPromise = null;
+  });
+}
+
+// --- Write listener (persist.ts mirrors snapshots to a linked folder) ------
+
 export function onStoreWrite(cb: ((s: Stored) => void) | null) {
   writeListener = cb;
 }
 
-function write(s: Stored) {
-  localStorage.setItem(KEY, JSON.stringify(s));
+function snapshot(): Stored {
+  return { sheets: cache.sheets.slice(), sets: cache.sets.slice() };
+}
+
+function notifyWrite() {
   try {
-    writeListener?.(s);
+    writeListener?.(snapshot());
   } catch {
     /* persistence is best-effort; never block a local save */
   }
 }
 
+// --- Public APIs (synchronous over the in-memory cache) -------------------
+
 /** Whole-library snapshot (for backup/export and folder sync). */
 export function readStore(): Stored {
-  const s = read();
-  return { sheets: s.sheets, sets: s.sets ?? [] };
+  return snapshot();
 }
 
 /** Replace the entire library (restore from backup / linked folder).
  *  `notify` writes through the persistence layer too (default); pass false
  *  when applying data that *came from* that layer to avoid an echo. */
 export function replaceStore(s: Stored, notify = true) {
-  const clean: Stored = { sheets: s.sheets ?? [], sets: s.sets ?? [] };
-  if (notify) {
-    write(clean);
-  } else {
-    localStorage.setItem(KEY, JSON.stringify(clean));
-  }
+  cache.sheets = (s.sheets ?? []).slice();
+  cache.sets = (s.sets ?? []).slice();
+  void getDb()
+    .then(async (db) => {
+      await idbReplaceAll(db, "sheets", cache.sheets);
+      await idbReplaceAll(db, "sets", cache.sets);
+    })
+    .catch((e) => console.error("replaceStore failed:", e));
+  if (notify) notifyWrite();
 }
 
 export function listSheets(): ChordSheet[] {
-  return read().sheets.sort((a, b) => b.updatedAt - a.updatedAt);
+  return cache.sheets.slice().sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export function getSheet(id: string): ChordSheet | undefined {
-  return read().sheets.find((s) => s.id === id);
+  return cache.sheets.find((s) => s.id === id);
 }
 
 export function saveSheet(sheet: ChordSheet) {
-  const s = read();
-  const idx = s.sheets.findIndex((x) => x.id === sheet.id);
   const updated = { ...sheet, updatedAt: Date.now() };
-  if (idx >= 0) s.sheets[idx] = updated;
-  else s.sheets.push(updated);
-  write(s);
+  const idx = cache.sheets.findIndex((s) => s.id === sheet.id);
+  if (idx >= 0) cache.sheets[idx] = updated;
+  else cache.sheets.push(updated);
+  void getDb()
+    .then((db) => idbPut(db, "sheets", updated))
+    .catch((e) => console.error("saveSheet failed:", e));
+  notifyWrite();
 }
 
 /** Patch a stored sheet's fields without touching the rest (used for the
  *  per-song display-key persistence so we don't have to write through the
  *  editor's full Save). */
 export function updateSheet(id: string, patch: Partial<ChordSheet>) {
-  const s = read();
-  const idx = s.sheets.findIndex((x) => x.id === id);
+  const idx = cache.sheets.findIndex((s) => s.id === id);
   if (idx < 0) return;
-  s.sheets[idx] = { ...s.sheets[idx], ...patch, updatedAt: Date.now() };
-  write(s);
+  const updated = { ...cache.sheets[idx], ...patch, updatedAt: Date.now() };
+  cache.sheets[idx] = updated;
+  void getDb()
+    .then((db) => idbPut(db, "sheets", updated))
+    .catch((e) => console.error("updateSheet failed:", e));
+  notifyWrite();
 }
 
 export function deleteSheet(id: string) {
-  const s = read();
-  s.sheets = s.sheets.filter((x) => x.id !== id);
+  cache.sheets = cache.sheets.filter((s) => s.id !== id);
   // Drop the sheet from any sets that referenced it.
-  s.sets = (s.sets ?? []).map((set) => ({
-    ...set,
-    sheetIds: set.sheetIds.filter((sid) => sid !== id),
-  }));
-  write(s);
+  const touched: SongSet[] = [];
+  cache.sets = cache.sets.map((set) => {
+    if (!set.sheetIds.includes(id)) return set;
+    const next = { ...set, sheetIds: set.sheetIds.filter((sid) => sid !== id) };
+    touched.push(next);
+    return next;
+  });
+  void getDb()
+    .then(async (db) => {
+      await idbDelete(db, "sheets", id);
+      for (const set of touched) await idbPut(db, "sets", set);
+    })
+    .catch((e) => console.error("deleteSheet failed:", e));
+  notifyWrite();
 }
 
 /** Replace the sheet at `oldId` with `newSheet`: removes `oldId`, saves
@@ -108,47 +293,64 @@ export function deleteSheet(id: string) {
  *  `oldId` to `newSheet.id`. Used by the duplicate-title "Replace" flow,
  *  where the user merges their current edits into an existing sheet. */
 export function replaceSheet(oldId: string, newSheet: ChordSheet) {
-  const s = read();
-  s.sheets = s.sheets.filter((x) => x.id !== oldId);
-  const idx = s.sheets.findIndex((x) => x.id === newSheet.id);
+  cache.sheets = cache.sheets.filter((x) => x.id !== oldId);
+  const idx = cache.sheets.findIndex((x) => x.id === newSheet.id);
   const updated = { ...newSheet, updatedAt: Date.now() };
-  if (idx >= 0) s.sheets[idx] = updated;
-  else s.sheets.push(updated);
-  s.sets = (s.sets ?? []).map((set) => {
+  if (idx >= 0) cache.sheets[idx] = updated;
+  else cache.sheets.push(updated);
+  const touched: SongSet[] = [];
+  cache.sets = cache.sets.map((set) => {
+    if (!set.sheetIds.some((sid) => sid === oldId || sid === newSheet.id))
+      return set;
     // Re-point references, then dedup in case the set already had both ids.
-    const mapped = set.sheetIds.map((sid) => (sid === oldId ? newSheet.id : sid));
+    const mapped = set.sheetIds.map((sid) =>
+      sid === oldId ? newSheet.id : sid,
+    );
     const seen = new Set<string>();
     const deduped = mapped.filter((sid) => {
       if (seen.has(sid)) return false;
       seen.add(sid);
       return true;
     });
-    return { ...set, sheetIds: deduped };
+    const next = { ...set, sheetIds: deduped };
+    touched.push(next);
+    return next;
   });
-  write(s);
+  void getDb()
+    .then(async (db) => {
+      await idbDelete(db, "sheets", oldId);
+      await idbPut(db, "sheets", updated);
+      for (const set of touched) await idbPut(db, "sets", set);
+    })
+    .catch((e) => console.error("replaceSheet failed:", e));
+  notifyWrite();
 }
 
 export function listSets(): SongSet[] {
-  return (read().sets ?? []).sort((a, b) => b.updatedAt - a.updatedAt);
+  return cache.sets.slice().sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export function getSet(id: string): SongSet | undefined {
-  return (read().sets ?? []).find((s) => s.id === id);
+  return cache.sets.find((s) => s.id === id);
 }
 
 export function saveSet(set: SongSet) {
-  const s = read();
-  const sets = s.sets ?? [];
-  const idx = sets.findIndex((x) => x.id === set.id);
   const updated = { ...set, updatedAt: Date.now() };
-  if (idx >= 0) sets[idx] = updated;
-  else sets.push(updated);
-  write({ ...s, sets });
+  const idx = cache.sets.findIndex((x) => x.id === set.id);
+  if (idx >= 0) cache.sets[idx] = updated;
+  else cache.sets.push(updated);
+  void getDb()
+    .then((db) => idbPut(db, "sets", updated))
+    .catch((e) => console.error("saveSet failed:", e));
+  notifyWrite();
 }
 
 export function deleteSet(id: string) {
-  const s = read();
-  write({ ...s, sets: (s.sets ?? []).filter((x) => x.id !== id) });
+  cache.sets = cache.sets.filter((x) => x.id !== id);
+  void getDb()
+    .then((db) => idbDelete(db, "sets", id))
+    .catch((e) => console.error("deleteSet failed:", e));
+  notifyWrite();
 }
 
 // ChordPro <-> SheetLine[] serialization for the textarea editor.

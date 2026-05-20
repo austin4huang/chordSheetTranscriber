@@ -34,7 +34,9 @@ browsers, plus `.json` backup/restore everywhere).
   chords, annotations included). Single songs or whole sets. Exports embed
   the source ChordPro so they re-import cleanly.
 - **Storage**
-  - Library lives in `localStorage` by default.
+  - Library lives in **IndexedDB** (per-record), with an in-memory cache for
+    fast sync reads. An existing localStorage library from earlier builds is
+    migrated automatically on first run.
   - `.json` backup / restore from the **Storage** panel.
   - On Chromium browsers, link a device folder to auto-save every change.
 
@@ -123,6 +125,21 @@ src/
 - React 19 + TypeScript + Vite
 - `pdfjs-dist` for PDF parsing, `jspdf` + `html-to-image` for PDF export
 - No backend. Everything runs in the browser; data stays on your device.
+
+## Scaling notes
+
+For typical libraries (≤500 songs) the app is comfortably fast. The known
+bottleneck if the library grows past that point is the **All songs** list in
+`SheetList.tsx`, which renders one DOM row per song. When that starts to feel
+sluggish — heavy initial paint, jank while scrolling, slow drag-reorder
+inside a set — virtualize the list so only the visible rows are in the DOM.
+Drop in `@tanstack/react-virtual` and wrap the `.sheets` `<ul>` (around the
+`visibleSheets.map(...)` call) in a virtualizer. The set rows expand
+inline and have variable height, so use the dynamic-measurement API
+(`useVirtualizer({ estimateSize, measureElement })`). Drag-to-reorder inside
+sets needs a small adjustment since off-screen rows aren't mounted —
+either don't virtualize inside an expanded set, or use the virtualizer's
+`scrollToIndex` to pull a target row into view before drop.
 
 ## Note on imported content
 

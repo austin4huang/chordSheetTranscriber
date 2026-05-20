@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChordSheet } from "../lib/types";
 import type { SongSet } from "../lib/storage";
 import type { AskConflict, ConflictAnswer } from "../App";
@@ -381,9 +381,17 @@ export function SheetList({ onOpen, askConflict }: Props) {
     sheets.find((s) => s.id === id)?.title ?? "(missing — deleted)";
 
   const q = query.trim().toLowerCase();
-  const matches = (t?: string) => !!t && t.toLowerCase().includes(q);
-  const sortSheets = (list: ChordSheet[]) => {
-    const arr = [...list];
+
+  // Memoize filter+sort so the lists don't re-walk every render — they only
+  // change when their actual inputs do (sheets/sets, sort choice, or query).
+  // Helpful even at moderate library sizes since this component re-renders
+  // on every keystroke in the search box.
+  const visibleSheets = useMemo(() => {
+    const matches = (t?: string) => !!t && t.toLowerCase().includes(q);
+    const filtered = q
+      ? sheets.filter((s) => matches(s.title) || matches(s.artist))
+      : sheets;
+    const arr = [...filtered];
     if (sortBy === "title") {
       arr.sort((a, b) =>
         a.title.localeCompare(b.title, undefined, { sensitivity: "base" }),
@@ -394,12 +402,19 @@ export function SheetList({ onOpen, askConflict }: Props) {
       arr.sort((a, b) => b.updatedAt - a.updatedAt);
     }
     return arr;
-  };
-  const visibleSheets = sortSheets(
-    q ? sheets.filter((s) => matches(s.title) || matches(s.artist)) : sheets,
-  );
-  const sortSets = (list: SongSet[]) => {
-    const arr = [...list];
+  }, [sheets, sortBy, q]);
+
+  const visibleSets = useMemo(() => {
+    const matches = (t?: string) => !!t && t.toLowerCase().includes(q);
+    const titleById = new Map(sheets.map((s) => [s.id, s.title]));
+    const filtered = q
+      ? sets.filter(
+          (set) =>
+            matches(set.name) ||
+            set.sheetIds.some((id) => matches(titleById.get(id))),
+        )
+      : sets;
+    const arr = [...filtered];
     if (setsSortBy === "title") {
       arr.sort((a, b) =>
         a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
@@ -408,14 +423,7 @@ export function SheetList({ onOpen, askConflict }: Props) {
       arr.sort((a, b) => createdAtOfSet(b) - createdAtOfSet(a));
     }
     return arr;
-  };
-  const visibleSets = sortSets(
-    q
-      ? sets.filter(
-          (set) => matches(set.name) || set.sheetIds.some((id) => matches(titleOf(id))),
-        )
-      : sets,
-  );
+  }, [sets, sheets, setsSortBy, q]);
 
   return (
     <div className="list-page">

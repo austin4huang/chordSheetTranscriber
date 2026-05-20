@@ -1,1 +1,10 @@
 /* Replaced by component-scoped CSS files. */
+
+.app-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  color: #6b7280;
+  font-size: 0.95rem;
+}
