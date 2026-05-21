@@ -214,6 +214,32 @@ function notifyWrite() {
   }
 }
 
+// IDB writes can fail (quota exceeded, schema upgrade blocked, etc.). When
+// they do, we still want the local UI to keep working off the in-memory
+// cache, but we need the user to know — otherwise their "saved" changes
+// vanish on reload. Emit an event that the Settings storage panel listens
+// to so the banner turns into an actual failure indicator.
+const STORAGE_ERROR_EVENT = "cs-storage-error";
+export interface StorageError {
+  op: string;
+  error: Error;
+}
+function reportStorageError(op: string, e: unknown) {
+  console.error(`${op} failed:`, e);
+  const error = e instanceof Error ? e : new Error(String(e));
+  window.dispatchEvent(
+    new CustomEvent<StorageError>(STORAGE_ERROR_EVENT, {
+      detail: { op, error },
+    }),
+  );
+}
+export function onStorageError(cb: (err: StorageError) => void): () => void {
+  const handler = (e: Event) =>
+    cb((e as CustomEvent<StorageError>).detail);
+  window.addEventListener(STORAGE_ERROR_EVENT, handler);
+  return () => window.removeEventListener(STORAGE_ERROR_EVENT, handler);
+}
+
 // --- Public APIs (synchronous over the in-memory cache) -------------------
 
 /** Whole-library snapshot (for backup/export and folder sync). */
@@ -223,17 +249,22 @@ export function readStore(): Stored {
 
 /** Replace the entire library (restore from backup / linked folder).
  *  `notify` writes through the persistence layer too (default); pass false
- *  when applying data that *came from* that layer to avoid an echo. */
-export function replaceStore(s: Stored, notify = true) {
+ *  when applying data that *came from* that layer to avoid an echo.
+ *  Returns a promise that resolves once IDB is in sync — callers (Restore,
+ *  Clear) can await it to surface errors. */
+export function replaceStore(s: Stored, notify = true): Promise<void> {
   cache.sheets = (s.sheets ?? []).slice();
   cache.sets = (s.sets ?? []).slice();
-  void getDb()
+  return getDb()
     .then(async (db) => {
       await idbReplaceAll(db, "sheets", cache.sheets);
       await idbReplaceAll(db, "sets", cache.sets);
+      if (notify) notifyWrite();
     })
-    .catch((e) => console.error("replaceStore failed:", e));
-  if (notify) notifyWrite();
+    .catch((e) => {
+      reportStorageError("replaceStore", e);
+      throw e;
+    });
 }
 
 export function listSheets(): ChordSheet[] {
@@ -244,32 +275,32 @@ export function getSheet(id: string): ChordSheet | undefined {
   return cache.sheets.find((s) => s.id === id);
 }
 
-export function saveSheet(sheet: ChordSheet) {
+export function saveSheet(sheet: ChordSheet): Promise<void> {
   const updated = { ...sheet, updatedAt: Date.now() };
   const idx = cache.sheets.findIndex((s) => s.id === sheet.id);
   if (idx >= 0) cache.sheets[idx] = updated;
   else cache.sheets.push(updated);
-  void getDb()
+  return getDb()
     .then((db) => idbPut(db, "sheets", updated))
-    .catch((e) => console.error("saveSheet failed:", e));
-  notifyWrite();
+    .then(() => notifyWrite())
+    .catch((e) => reportStorageError("saveSheet", e));
 }
 
 /** Patch a stored sheet's fields without touching the rest (used for the
  *  per-song display-key persistence so we don't have to write through the
  *  editor's full Save). */
-export function updateSheet(id: string, patch: Partial<ChordSheet>) {
+export function updateSheet(id: string, patch: Partial<ChordSheet>): Promise<void> {
   const idx = cache.sheets.findIndex((s) => s.id === id);
-  if (idx < 0) return;
+  if (idx < 0) return Promise.resolve();
   const updated = { ...cache.sheets[idx], ...patch, updatedAt: Date.now() };
   cache.sheets[idx] = updated;
-  void getDb()
+  return getDb()
     .then((db) => idbPut(db, "sheets", updated))
-    .catch((e) => console.error("updateSheet failed:", e));
-  notifyWrite();
+    .then(() => notifyWrite())
+    .catch((e) => reportStorageError("updateSheet", e));
 }
 
-export function deleteSheet(id: string) {
+export function deleteSheet(id: string): Promise<void> {
   cache.sheets = cache.sheets.filter((s) => s.id !== id);
   // Drop the sheet from any sets that referenced it.
   const touched: SongSet[] = [];
@@ -279,20 +310,20 @@ export function deleteSheet(id: string) {
     touched.push(next);
     return next;
   });
-  void getDb()
+  return getDb()
     .then(async (db) => {
       await idbDelete(db, "sheets", id);
       for (const set of touched) await idbPut(db, "sets", set);
     })
-    .catch((e) => console.error("deleteSheet failed:", e));
-  notifyWrite();
+    .then(() => notifyWrite())
+    .catch((e) => reportStorageError("deleteSheet", e));
 }
 
 /** Replace the sheet at `oldId` with `newSheet`: removes `oldId`, saves
  *  `newSheet` (insert or update), and re-points any set references from
  *  `oldId` to `newSheet.id`. Used by the duplicate-title "Replace" flow,
  *  where the user merges their current edits into an existing sheet. */
-export function replaceSheet(oldId: string, newSheet: ChordSheet) {
+export function replaceSheet(oldId: string, newSheet: ChordSheet): Promise<void> {
   cache.sheets = cache.sheets.filter((x) => x.id !== oldId);
   const idx = cache.sheets.findIndex((x) => x.id === newSheet.id);
   const updated = { ...newSheet, updatedAt: Date.now() };
@@ -316,14 +347,14 @@ export function replaceSheet(oldId: string, newSheet: ChordSheet) {
     touched.push(next);
     return next;
   });
-  void getDb()
+  return getDb()
     .then(async (db) => {
       await idbDelete(db, "sheets", oldId);
       await idbPut(db, "sheets", updated);
       for (const set of touched) await idbPut(db, "sets", set);
     })
-    .catch((e) => console.error("replaceSheet failed:", e));
-  notifyWrite();
+    .then(() => notifyWrite())
+    .catch((e) => reportStorageError("replaceSheet", e));
 }
 
 export function listSets(): SongSet[] {
@@ -334,23 +365,23 @@ export function getSet(id: string): SongSet | undefined {
   return cache.sets.find((s) => s.id === id);
 }
 
-export function saveSet(set: SongSet) {
+export function saveSet(set: SongSet): Promise<void> {
   const updated = { ...set, updatedAt: Date.now() };
   const idx = cache.sets.findIndex((x) => x.id === set.id);
   if (idx >= 0) cache.sets[idx] = updated;
   else cache.sets.push(updated);
-  void getDb()
+  return getDb()
     .then((db) => idbPut(db, "sets", updated))
-    .catch((e) => console.error("saveSet failed:", e));
-  notifyWrite();
+    .then(() => notifyWrite())
+    .catch((e) => reportStorageError("saveSet", e));
 }
 
-export function deleteSet(id: string) {
+export function deleteSet(id: string): Promise<void> {
   cache.sets = cache.sets.filter((x) => x.id !== id);
-  void getDb()
+  return getDb()
     .then((db) => idbDelete(db, "sets", id))
-    .catch((e) => console.error("deleteSet failed:", e));
-  notifyWrite();
+    .then(() => notifyWrite())
+    .catch((e) => reportStorageError("deleteSet", e));
 }
 
 // ChordPro <-> SheetLine[] serialization for the textarea editor.

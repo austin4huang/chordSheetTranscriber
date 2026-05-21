@@ -362,13 +362,19 @@
 .sheet-item .open {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   text-align: left;
   padding: 0.85rem 1rem;
   background: transparent;
   border: none;
   cursor: pointer;
+  font: inherit;
+  color: inherit;
 }
 .sheet-item .open:hover { background: #f4f6fb; }
+.sheet-item .open:focus-visible { outline: 2px solid #2a6cdc; outline-offset: -2px; }
 .sheet-item .title { font-weight: 600; font-size: 1rem; }
 .sheet-item .meta { color: #777; font-size: 0.85rem; margin-top: 0.15rem; }
 .sheet-item .delete {
@@ -657,6 +663,11 @@
   border: 1px solid #bfe3c6;
   border-radius: 6px;
   padding: 0.4rem 0.6rem;
+}
+.storage-msg.is-error {
+  color: #b42318;
+  background: #fdecea;
+  border-color: #f4c0bb;
 }
 
 .rename-form {

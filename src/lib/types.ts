@@ -77,3 +77,41 @@ export function blankSheet(): ChordSheet {
     updatedAt: now,
   };
 }
+
+// --- Schema guards for untrusted input -------------------------------------
+// Used at boundaries where externally-supplied data crosses into the app
+// (PDF /Keywords payloads, JSON backups, files in a linked folder). Reject
+// anything that doesn't match the minimum required shape so downstream code
+// only ever sees well-formed sheets.
+
+const LINE_KINDS = new Set<LineKind>([
+  "chordpro",
+  "chord-only",
+  "section",
+  "comment",
+  "blank",
+]);
+
+export function isSheetLine(o: unknown): o is SheetLine {
+  if (!o || typeof o !== "object") return false;
+  const l = o as { kind?: unknown; text?: unknown };
+  return (
+    typeof l.kind === "string" &&
+    LINE_KINDS.has(l.kind as LineKind) &&
+    typeof l.text === "string"
+  );
+}
+
+export function isChordSheet(o: unknown): o is ChordSheet {
+  if (!o || typeof o !== "object") return false;
+  const s = o as Partial<ChordSheet>;
+  return (
+    typeof s.id === "string" &&
+    typeof s.title === "string" &&
+    typeof s.key === "string" &&
+    (s.mode === "major" || s.mode === "minor") &&
+    typeof s.updatedAt === "number" &&
+    Array.isArray(s.lines) &&
+    s.lines.every(isSheetLine)
+  );
+}

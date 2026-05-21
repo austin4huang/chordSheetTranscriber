@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -122,6 +123,33 @@ export function SheetEditor({
   const setEditorHidden = onEditorHiddenChange;
   const setPresenting = onPresentingChange;
 
+  // In present mode: enter real fullscreen so address bar / tab strip get
+  // out of the way. The overlay still handles the visuals; the browser
+  // chrome hiding is the whole point of using requestFullscreen here.
+  // Some browsers reject silently if not from a user gesture (we always
+  // are — F-key, toolbar button, Present button) but ignore failures
+  // either way so present-mode UX still works when fullscreen is blocked.
+  useEffect(() => {
+    if (presenting) {
+      const el = document.documentElement;
+      if (el.requestFullscreen && !document.fullscreenElement) {
+        el.requestFullscreen().catch(() => {});
+      }
+      // If the user leaves fullscreen via the browser's own controls (Esc on
+      // some platforms, gesture, etc.), reflect that by exiting present too.
+      const onChange = () => {
+        if (!document.fullscreenElement) setPresenting(false);
+      };
+      document.addEventListener("fullscreenchange", onChange);
+      return () => {
+        document.removeEventListener("fullscreenchange", onChange);
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        }
+      };
+    }
+  }, [presenting, setPresenting]);
+
   // In present mode: Esc exits; ←/→ flip between songs in the set.
   const navRef = useRef(setNav);
   useEffect(() => {
@@ -226,9 +254,14 @@ export function SheetEditor({
   }, []);
   const resetSplit = useCallback(() => setSplit(50), []);
 
+  // Defer the parse so the preview re-tokenises against a slightly stale
+  // copy of the textarea text. Keystrokes stay snappy on long songs because
+  // the expensive textToSheet + SheetRenderer chain runs at lower priority
+  // (React only commits the deferred result when the input commit settles).
+  const deferredText = useDeferredValue(text);
   const sheet = useMemo<ChordSheet>(() => {
-    return textToSheet(text, initial);
-  }, [text, initial]);
+    return textToSheet(deferredText, initial);
+  }, [deferredText, initial]);
 
   // When the song's actual key changes (parsed from a `{key:}` directive
   // edit *within this song*), update the display key to it. Local-component
@@ -272,8 +305,11 @@ export function SheetEditor({
   }, [displayKey, preferFlats, initial.id]);
 
   const onSave = async () => {
+    // Re-parse the latest text directly: `sheet` is built from the deferred
+    // text and may lag behind the textarea by a few keystrokes.
+    const latest = textToSheet(text, initial);
     let toSave: ChordSheet = {
-      ...sheet,
+      ...latest,
       annotations,
       texts,
       annoRef,

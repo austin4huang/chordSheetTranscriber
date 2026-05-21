@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { SheetList } from "./components/SheetList";
 import { SheetEditor } from "./components/SheetEditor";
 import { SheetRenderer } from "./components/SheetRenderer";
@@ -6,6 +6,7 @@ import { Settings } from "./components/Settings";
 import { getSheet, getSet, whenStorageReady } from "./lib/storage";
 import { initPersistence } from "./lib/persist";
 import { loadPrefs, getPrefs, updatePrefs, onPrefsChange } from "./lib/prefs";
+import { useModal } from "./lib/useModal";
 import type { ChordSheet } from "./lib/types";
 import "./App.css";
 
@@ -275,170 +276,197 @@ export default function App() {
       {main}
       {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
       {importPreview && (
-        <div
-          className="modal-backdrop"
-          onClick={() => resolveImport(false)}
-        >
-          <div
-            className="modal modal-compare modal-import-preview"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="import-preview-title"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 id="import-preview-title" className="modal-title">
-              Import {importPreview.sheets.length}{" "}
-              song{importPreview.sheets.length === 1 ? "" : "s"}?
-            </h3>
-            <p className="modal-body">
-              Review the parsed {importPreview.sheets.length === 1 ? "song" : "songs"} below.
-              Duplicate-title prompts (if any) will follow once you click Import.
-            </p>
-            <div className="import-preview-list">
-              {importPreview.sheets.map((s, i) => (
-                <div key={i} className="compare-pane">
-                  <header className="compare-pane-head">
-                    {s.title}
-                    {s.artist ? <span className="ip-artist"> · {s.artist}</span> : null}
-                    <span className="ip-meta">
-                      {" · "}{s.key}{s.mode === "minor" ? "m" : ""}
-                      {" · "}{s.lines.length} lines
-                    </span>
-                  </header>
-                  <div className="compare-pane-body">
-                    <SheetRenderer
-                      sheet={s}
-                      numberMode={false}
-                      displayKey={s.displayKey ?? s.key}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="modal-actions">
-              <button
-                className="modal-btn"
-                onClick={() => resolveImport(false)}
-              >
-                Cancel
-              </button>
-              <button
-                className="modal-btn primary"
-                onClick={() => resolveImport(true)}
-              >
-                Import
-              </button>
-            </div>
-          </div>
-        </div>
+        <ImportPreviewModal
+          sheets={importPreview.sheets}
+          onResolve={resolveImport}
+        />
       )}
       {conflict && (
-        <div
-          className="modal-backdrop"
-          onClick={() => resolveConflict(null)}
-        >
-          <div
-            className="modal modal-compare"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="conflict-title"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 id="conflict-title" className="modal-title">
-              A song titled "{conflict.incoming.title}" already exists
-            </h3>
-            <p className="modal-body">
-              Compare the two versions below, then choose to replace the
-              existing song or keep both (the incoming one is renamed
-              automatically).
-            </p>
-            {(() => {
-              const diff = summarizeDiff(conflict.existing, conflict.incoming);
-              if (diff.length === 0) {
-                return (
-                  <p className="compare-diff compare-diff-empty">
-                    No metadata differences — the versions may still have
-                    different annotations or formatting (see previews).
-                  </p>
-                );
-              }
-              return (
-                <ul className="compare-diff">
-                  {diff.map((line, i) => (
-                    <li key={i}>{line}</li>
-                  ))}
-                </ul>
-              );
-            })()}
-            <div className="compare-grid">
-              <div className="compare-pane">
-                <header className="compare-pane-head">Existing</header>
-                <div className="compare-pane-body">
-                  <SheetRenderer
-                    sheet={conflict.existing}
-                    numberMode={false}
-                    displayKey={conflict.existing.displayKey ?? conflict.existing.key}
-                  />
-                </div>
-              </div>
-              <div className="compare-pane">
-                <header className="compare-pane-head">Incoming</header>
-                <div className="compare-pane-body">
-                  <SheetRenderer
-                    sheet={conflict.incoming}
-                    numberMode={false}
-                    displayKey={conflict.incoming.displayKey ?? conflict.incoming.key}
-                  />
-                </div>
+        <ConflictModal
+          existing={conflict.existing}
+          incoming={conflict.incoming}
+          remaining={conflict.remaining}
+          applyAll={conflictApplyAll}
+          onApplyAllChange={setConflictApplyAll}
+          onResolve={resolveConflict}
+        />
+      )}
+    </>
+  );
+}
+
+function ImportPreviewModal({
+  sheets,
+  onResolve,
+}: {
+  sheets: ChordSheet[];
+  onResolve: (accept: boolean) => void;
+}) {
+  const cancel = useCallback(() => onResolve(false), [onResolve]);
+  const ref = useModal(cancel);
+  return (
+    <div className="modal-backdrop" onClick={cancel}>
+      <div
+        ref={ref}
+        className="modal modal-compare modal-import-preview"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="import-preview-title"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 id="import-preview-title" className="modal-title">
+          Import {sheets.length} song{sheets.length === 1 ? "" : "s"}?
+        </h3>
+        <p className="modal-body">
+          Review the parsed {sheets.length === 1 ? "song" : "songs"} below.
+          Duplicate-title prompts (if any) will follow once you click Import.
+        </p>
+        <div className="import-preview-list">
+          {sheets.map((s, i) => (
+            <div key={i} className="compare-pane">
+              <header className="compare-pane-head">
+                {s.title}
+                {s.artist ? <span className="ip-artist"> · {s.artist}</span> : null}
+                <span className="ip-meta">
+                  {" · "}{s.key}{s.mode === "minor" ? "m" : ""}
+                  {" · "}{s.lines.length} lines
+                </span>
+              </header>
+              <div className="compare-pane-body">
+                <SheetRenderer
+                  sheet={s}
+                  numberMode={false}
+                  displayKey={s.displayKey ?? s.key}
+                />
               </div>
             </div>
-            {conflict.remaining > 0 && (
-              <label className="modal-applyall">
-                <input
-                  type="checkbox"
-                  checked={conflictApplyAll}
-                  onChange={(e) => setConflictApplyAll(e.target.checked)}
-                />
-                <span>
-                  Apply this choice to the remaining {conflict.remaining}
-                  {" "}duplicate{conflict.remaining === 1 ? "" : "s"} in this
-                  import
-                </span>
-              </label>
-            )}
-            <div className="modal-actions">
-              <button
-                className="modal-btn"
-                onClick={() => resolveConflict(null)}
-              >
-                Cancel
-              </button>
-              <button
-                className="modal-btn primary"
-                onClick={() =>
-                  resolveConflict({
-                    choice: "rename",
-                    applyToAll: conflictApplyAll,
-                  })
-                }
-              >
-                Keep both
-              </button>
-              <button
-                className="modal-btn danger"
-                onClick={() =>
-                  resolveConflict({
-                    choice: "replace",
-                    applyToAll: conflictApplyAll,
-                  })
-                }
-              >
-                Replace existing
-              </button>
+          ))}
+        </div>
+        <div className="modal-actions">
+          <button className="modal-btn" onClick={cancel}>
+            Cancel
+          </button>
+          <button
+            className="modal-btn primary"
+            data-autofocus
+            onClick={() => onResolve(true)}
+          >
+            Import
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConflictModal({
+  existing,
+  incoming,
+  remaining,
+  applyAll,
+  onApplyAllChange,
+  onResolve,
+}: {
+  existing: ChordSheet;
+  incoming: ChordSheet;
+  remaining: number;
+  applyAll: boolean;
+  onApplyAllChange: (v: boolean) => void;
+  onResolve: (r: ConflictAnswer | null) => void;
+}) {
+  const cancel = useCallback(() => onResolve(null), [onResolve]);
+  const ref = useModal(cancel);
+  const diff = summarizeDiff(existing, incoming);
+  return (
+    <div className="modal-backdrop" onClick={cancel}>
+      <div
+        ref={ref}
+        className="modal modal-compare"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="conflict-title"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 id="conflict-title" className="modal-title">
+          A song titled "{incoming.title}" already exists
+        </h3>
+        <p className="modal-body">
+          Compare the two versions below, then choose to replace the
+          existing song or keep both (the incoming one is renamed
+          automatically).
+        </p>
+        {diff.length === 0 ? (
+          <p className="compare-diff compare-diff-empty">
+            No metadata differences — the versions may still have
+            different annotations or formatting (see previews).
+          </p>
+        ) : (
+          <ul className="compare-diff">
+            {diff.map((line, i) => (
+              <li key={i}>{line}</li>
+            ))}
+          </ul>
+        )}
+        <div className="compare-grid">
+          <div className="compare-pane">
+            <header className="compare-pane-head">Existing</header>
+            <div className="compare-pane-body">
+              <SheetRenderer
+                sheet={existing}
+                numberMode={false}
+                displayKey={existing.displayKey ?? existing.key}
+              />
+            </div>
+          </div>
+          <div className="compare-pane">
+            <header className="compare-pane-head">Incoming</header>
+            <div className="compare-pane-body">
+              <SheetRenderer
+                sheet={incoming}
+                numberMode={false}
+                displayKey={incoming.displayKey ?? incoming.key}
+              />
             </div>
           </div>
         </div>
-      )}
-    </>
+        {remaining > 0 && (
+          <label className="modal-applyall">
+            <input
+              type="checkbox"
+              checked={applyAll}
+              onChange={(e) => onApplyAllChange(e.target.checked)}
+            />
+            <span>
+              Apply this choice to the remaining {remaining}
+              {" "}duplicate{remaining === 1 ? "" : "s"} in this import
+            </span>
+          </label>
+        )}
+        <div className="modal-actions">
+          <button className="modal-btn" onClick={cancel}>
+            Cancel
+          </button>
+          <button
+            className="modal-btn primary"
+            data-autofocus
+            onClick={() =>
+              onResolve({ choice: "rename", applyToAll: applyAll })
+            }
+          >
+            Keep both
+          </button>
+          <button
+            className="modal-btn danger"
+            onClick={() =>
+              onResolve({ choice: "replace", applyToAll: applyAll })
+            }
+          >
+            Replace existing
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

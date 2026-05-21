@@ -17,7 +17,9 @@ import {
   replaceStore,
   whenStorageReady,
   type Stored,
+  type SongSet,
 } from "./storage";
+import { isChordSheet } from "./types";
 
 const LIBRARY_FILENAME = "chordsheets-library.json";
 const LIBRARY_CHANGED_EVENT = "cs-library-changed";
@@ -93,12 +95,26 @@ async function hasPermission(h: DirHandle, prompt: boolean): Promise<boolean> {
   return (await h.requestPermission({ mode: "readwrite" })) === "granted";
 }
 
-function isStored(v: unknown): v is Stored {
+function isSongSet(o: unknown): o is SongSet {
+  if (!o || typeof o !== "object") return false;
+  const s = o as Partial<SongSet>;
   return (
-    !!v &&
-    typeof v === "object" &&
-    Array.isArray((v as Stored).sheets)
+    typeof s.id === "string" &&
+    typeof s.name === "string" &&
+    Array.isArray(s.sheetIds) &&
+    s.sheetIds.every((id) => typeof id === "string") &&
+    typeof s.updatedAt === "number"
   );
+}
+
+function isStored(v: unknown): v is Stored {
+  if (!v || typeof v !== "object") return false;
+  const s = v as Partial<Stored>;
+  if (!Array.isArray(s.sheets) || !s.sheets.every(isChordSheet)) return false;
+  if (s.sets !== undefined) {
+    if (!Array.isArray(s.sets) || !s.sets.every(isSongSet)) return false;
+  }
+  return true;
 }
 
 async function readFolderLibrary(h: DirHandle): Promise<Stored | null> {
@@ -244,7 +260,7 @@ export async function restoreBackup(file: File): Promise<void> {
   if (!isStored(parsed)) {
     throw new Error("That file isn't a Chord Sheets backup.");
   }
-  replaceStore(parsed, true); // write-through also mirrors to the folder
+  await replaceStore(parsed, true); // write-through also mirrors to the folder
   emitLibraryChanged();
 }
 
@@ -252,8 +268,8 @@ export async function restoreBackup(file: File): Promise<void> {
  *  is updated too so the next open doesn't re-hydrate from a stale file.
  *  Preferences in the `kv` store are NOT touched; those persist a user's
  *  Settings choices and clearing them would be confusing. */
-export function clearLibrary(): void {
-  replaceStore({ sheets: [], sets: [] }, true);
+export async function clearLibrary(): Promise<void> {
+  await replaceStore({ sheets: [], sets: [] }, true);
   emitLibraryChanged();
 }
 

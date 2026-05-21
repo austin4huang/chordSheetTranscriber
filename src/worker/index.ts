@@ -35,11 +35,42 @@ const BROWSER_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 " +
   "(KHTML, like Gecko) Version/17.4 Safari/605.1.15";
 
+// Defense-in-depth CSP: the SPA only loads same-origin code/styles/fonts and
+// only opens connections back to itself (the UG import path goes through
+// /api/fetch on this origin). `worker-src 'self' blob:` is needed for
+// pdfjs-dist's worker (vite emits it as a blob URL in some bundles); revisit
+// if pdfjs is removed. `style-src 'unsafe-inline'` is required for the React
+// inline style attributes used throughout the app.
+const CSP =
+  "default-src 'self'; " +
+  "img-src 'self' data: blob:; " +
+  "style-src 'self' 'unsafe-inline'; " +
+  "script-src 'self' 'wasm-unsafe-eval'; " +
+  "worker-src 'self' blob:; " +
+  "connect-src 'self'; " +
+  "font-src 'self' data:; " +
+  "frame-ancestors 'none'; " +
+  "base-uri 'none'; " +
+  "form-action 'none'";
+
+function withSecurityHeaders(res: Response): Response {
+  const h = new Headers(res.headers);
+  h.set("Content-Security-Policy", CSP);
+  h.set("X-Content-Type-Options", "nosniff");
+  h.set("Referrer-Policy", "no-referrer");
+  h.set("Permissions-Policy", "interest-cohort=()");
+  return new Response(res.body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers: h,
+  });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/api/fetch") return proxyFetch(request, env, url);
-    return env.ASSETS.fetch(request);
+    return withSecurityHeaders(await env.ASSETS.fetch(request));
   },
 };
 
@@ -60,10 +91,11 @@ async function proxyFetch(
   // hits the wall in seconds. Skipped (open) when the binding isn't
   // configured in the current environment — see Env.RATE_LIMITER.
   if (env.RATE_LIMITER) {
-    const ip =
-      request.headers.get("CF-Connecting-IP") ||
-      request.headers.get("X-Forwarded-For") ||
-      "unknown";
+    // CF-Connecting-IP is set by the edge and cannot be spoofed; if it's
+    // missing, bucket all unknown callers into one key rather than honoring
+    // a client-supplied X-Forwarded-For (which would let attackers rotate
+    // their rate-limit key by injecting the header).
+    const ip = request.headers.get("CF-Connecting-IP") || "unknown";
     const { success } = await env.RATE_LIMITER.limit({ key: ip });
     if (!success) {
       return errorJson(429, "Too many import requests, please slow down.");

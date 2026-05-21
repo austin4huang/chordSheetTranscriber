@@ -8,7 +8,7 @@ import { jsPDF } from "jspdf";
 import { toPng } from "html-to-image";
 import React from "react";
 import { createRoot } from "react-dom/client";
-import type { ChordSheet } from "./types";
+import { type ChordSheet, isChordSheet } from "./types";
 import { SheetRenderer } from "../components/SheetRenderer";
 
 const MARKER = "CHORDSHEETv1:";
@@ -17,8 +17,24 @@ export type EmbeddedPayload =
   | { v: 1; kind: "song"; sheet: ChordSheet }
   | { v: 1; kind: "set"; name: string; sheets: ChordSheet[] };
 
+// UTF-8-safe base64 round-trip. The legacy `unescape(encodeURIComponent(...))`
+// trick is deprecated and mis-handles some Unicode (notably emoji, lone
+// surrogates); TextEncoder/TextDecoder do it correctly.
+function utf8ToB64(s: string): string {
+  const bytes = new TextEncoder().encode(s);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+function b64ToUtf8(b64: string): string {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
 function encodePayload(obj: EmbeddedPayload): string {
-  return MARKER + btoa(unescape(encodeURIComponent(JSON.stringify(obj))));
+  return MARKER + utf8ToB64(JSON.stringify(obj));
 }
 
 /** Decode an embedded payload from a PDF /Keywords string, or null if it
@@ -26,15 +42,36 @@ function encodePayload(obj: EmbeddedPayload): string {
 export function decodePayload(keywords: string | null | undefined): EmbeddedPayload | null {
   if (!keywords || !keywords.startsWith(MARKER)) return null;
   try {
-    const json = decodeURIComponent(escape(atob(keywords.slice(MARKER.length))));
-    const obj = JSON.parse(json) as EmbeddedPayload;
-    if (obj && obj.v === 1 && (obj.kind === "song" || obj.kind === "set")) {
-      return obj;
-    }
+    const json = b64ToUtf8(keywords.slice(MARKER.length));
+    const obj = JSON.parse(json);
+    if (isEmbeddedPayload(obj)) return obj;
   } catch {
     /* fall through */
   }
   return null;
+}
+
+// Schema guard for embedded payloads. The PDF /Keywords field is attacker-
+// controllable (someone could craft a PDF with a CHORDSHEETv1: header that
+// claims to be a "song" but has malformed lines). The deep `isChordSheet`
+// check from types.ts validates every line, so downstream code only ever
+// sees well-formed sheets.
+function isEmbeddedPayload(o: unknown): o is EmbeddedPayload {
+  if (!o || typeof o !== "object") return false;
+  const obj = o as { v?: unknown; kind?: unknown };
+  if (obj.v !== 1) return false;
+  if (obj.kind === "song") {
+    return isChordSheet((obj as { sheet?: unknown }).sheet);
+  }
+  if (obj.kind === "set") {
+    const s = obj as { name?: unknown; sheets?: unknown };
+    return (
+      typeof s.name === "string" &&
+      Array.isArray(s.sheets) &&
+      s.sheets.every(isChordSheet)
+    );
+  }
+  return false;
 }
 
 // --- Layout -----------------------------------------------------------------

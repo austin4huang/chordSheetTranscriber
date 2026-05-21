@@ -1118,39 +1118,30 @@ export function SheetList({
                     </button>
                   </form>
                 ) : (
-                  <div
-                    className="open"
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => onOpen(s.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        onOpen(s.id);
-                      }
-                    }}
-                  >
-                    <div className="title-row">
+                  <>
+                    <button
+                      type="button"
+                      className="open"
+                      onClick={() => onOpen(s.id)}
+                    >
                       <span className="title">{s.title}</span>
-                      <button
-                        className="icon-btn title-edit"
-                        title="Rename song title"
-                        aria-label="Rename song title"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          beginRename("song", s.id, s.title);
-                        }}
-                      >
-                        <EditIcon size={16} />
-                      </button>
-                    </div>
-                    <div className="meta">
-                      Key {s.key}{s.mode === "minor" ? "m" : ""}
-                      {s.artist ? ` · ${s.artist}` : ""}
-                      {" · "}
-                      {new Date(s.updatedAt).toLocaleDateString()}
-                    </div>
-                  </div>
+                      <span className="meta">
+                        Key {s.key}{s.mode === "minor" ? "m" : ""}
+                        {s.artist ? ` · ${s.artist}` : ""}
+                        {" · "}
+                        {new Date(s.updatedAt).toLocaleDateString()}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-btn title-edit"
+                      title="Rename song title"
+                      aria-label="Rename song title"
+                      onClick={() => beginRename("song", s.id, s.title)}
+                    >
+                      <EditIcon size={16} />
+                    </button>
+                  </>
                 )}
                 {sets.length > 0 && (
                   <select

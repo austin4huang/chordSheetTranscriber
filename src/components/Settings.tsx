@@ -12,6 +12,8 @@ import {
   onLibraryChanged,
   type StorageStatus,
 } from "../lib/persist";
+import { useModal } from "../lib/useModal";
+import { onStorageError } from "../lib/storage";
 import { DownloadIcon, TrashIcon, UploadIcon, XIcon } from "./icons";
 import "./Settings.css";
 
@@ -38,33 +40,41 @@ const PEN_COLORS = [
  *
  *  Pref edits are transactional: the row controls update a local *draft*
  *  copy; nothing reaches the prefs store (and therefore the rest of the
- *  app) until the user hits Done. Closing via the X or backdrop discards
- *  the draft. Storage-section actions (link/unlink, backup/restore, clear
- *  library) are NOT prefs — they're immediate side-effects either way. */
+ *  app) until the user hits Done. Cancel / X / backdrop click / Esc discard
+ *  the draft — when the draft is dirty they confirm first so a stray click
+ *  can't lose work. Storage-section actions (link/unlink, backup/restore,
+ *  clear library) are NOT prefs — they're immediate side-effects either way. */
 export function Settings({ onClose }: Props) {
   // Draft prefs, seeded from the currently persisted values on mount. The
   // patch helper only updates this local copy; commit happens in `onDone`.
   const [prefs, setPrefs] = useState<Prefs>(getPrefs());
   const patch = (p: Partial<Prefs>) => setPrefs((d) => ({ ...d, ...p }));
-  // Active tab. Defaults to the first tab on each open; deliberate, so the
-  // user always lands on a consistent starting point.
-  const [tab, setTab] = useState<TabKey>("display");
-  const onDone = () => {
-    // Diff against the persisted prefs to skip a no-op write — keeps
-    // pref subscribers from re-running when the user just opened/closed.
+  // Active tab. Defaults to Storage on each open; deliberate, so the user
+  // always lands on a consistent starting point.
+  const [tab, setTab] = useState<TabKey>("storage");
+  const isDirty = () => {
     const saved = getPrefs();
-    const dirty = (Object.keys(prefs) as (keyof Prefs)[]).some(
+    return (Object.keys(prefs) as (keyof Prefs)[]).some(
       (k) => prefs[k] !== saved[k],
     );
-    if (dirty) updatePrefs(prefs);
+  };
+  const onDone = () => {
+    if (isDirty()) updatePrefs(prefs);
     onClose();
   };
+  const tryClose = () => {
+    if (isDirty() && !confirm("Discard unsaved settings changes?")) return;
+    onClose();
+  };
+  const modalRef = useModal(tryClose);
 
   // Storage status / actions. Mirrored from the same source as the header
   // badge — both subscribe to storage + library change events so they
   // refresh together after any folder link/unlink/reconnect/restore.
   const [storageStatus, setStorageStatus] = useState<StorageStatus | null>(null);
-  const [storageMsg, setStorageMsg] = useState<string | null>(null);
+  const [storageMsg, setStorageMsg] = useState<
+    { text: string; kind: "ok" | "error" } | null
+  >(null);
   const restoreRef = useRef<HTMLInputElement>(null);
   // Two-step "Clear everything" confirm: first click arms (button turns red,
   // label changes), second click within ~3 s actually wipes. Auto-disarms.
@@ -91,8 +101,15 @@ export function Settings({ onClose }: Props) {
       confirmTimer.current = null;
     }
     setConfirmingClear(false);
-    clearLibrary();
-    setStorageMsg("Library cleared.");
+    setStorageMsg(null);
+    clearLibrary()
+      .then(() => setStorageMsg({ text: "Library cleared.", kind: "ok" }))
+      .catch((e) =>
+        setStorageMsg({
+          text: e instanceof Error ? e.message : "Couldn't clear library.",
+          kind: "error",
+        }),
+      );
   };
   useEffect(() => {
     const refresh = () => {
@@ -101,9 +118,19 @@ export function Settings({ onClose }: Props) {
     refresh();
     const off1 = onStorageChanged(refresh);
     const off2 = onLibraryChanged(refresh);
+    // Surface IDB write failures that happen out-of-band (e.g. background
+    // saves while the modal is open). Otherwise the user wouldn't know
+    // their save vanished until next reload.
+    const off3 = onStorageError(({ error }) =>
+      setStorageMsg({
+        text: `Couldn't save to local storage: ${error.message}`,
+        kind: "error",
+      }),
+    );
     return () => {
       off1();
       off2();
+      off3();
     };
   }, []);
 
@@ -111,27 +138,32 @@ export function Settings({ onClose }: Props) {
     setStorageMsg(null);
     try {
       await fn();
-      setStorageMsg(ok);
+      setStorageMsg({ text: ok, kind: "ok" });
     } catch (e) {
       if ((e as DOMException)?.name === "AbortError") return;
-      setStorageMsg(e instanceof Error ? e.message : "Something went wrong.");
+      setStorageMsg({
+        text: e instanceof Error ? e.message : "Something went wrong.",
+        kind: "error",
+      });
     }
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" onClick={tryClose}>
       <div
+        ref={modalRef}
         className="modal settings-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         <header className="settings-head">
           <h3 id="settings-title">Settings</h3>
           <button
             className="settings-close"
-            onClick={onClose}
+            onClick={tryClose}
             aria-label="Close settings"
             title="Close"
           >
@@ -333,7 +365,14 @@ export function Settings({ onClose }: Props) {
             </p>
           )}
 
-          {storageMsg && <p className="storage-msg">{storageMsg}</p>}
+          {storageMsg && (
+            <p
+              className={`storage-msg${storageMsg.kind === "error" ? " is-error" : ""}`}
+              role={storageMsg.kind === "error" ? "alert" : "status"}
+            >
+              {storageMsg.text}
+            </p>
+          )}
           <input
             ref={restoreRef}
             type="file"
@@ -408,7 +447,7 @@ export function Settings({ onClose }: Props) {
         )}
 
         <footer className="settings-foot">
-          <button className="modal-btn" onClick={onClose}>
+          <button className="modal-btn" onClick={tryClose}>
             Cancel
           </button>
           <button className="modal-btn primary" onClick={onDone}>
