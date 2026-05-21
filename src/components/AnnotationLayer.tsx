@@ -276,9 +276,9 @@ function TextBox({
 
 type LineRect = { left: number; top: number; width: number; height: number };
 
-function sameRects(
-  a: Map<number, LineRect>,
-  b: Map<number, LineRect>,
+function sameRects<K>(
+  a: Map<K, LineRect>,
+  b: Map<K, LineRect>,
 ): boolean {
   if (a.size !== b.size) return false;
   // Tolerate sub-pixel jitter from getBoundingClientRect so layout-stable
@@ -324,6 +324,14 @@ export function AnnotationLayer({
   const [lineRects, setLineRects] = useState<
     Map<number, { left: number; top: number; width: number; height: number }>
   >(new Map());
+  // Bounding rects of each chord/lyric pair within chordpro lines, keyed by
+  // `"<lineIndex>:<tokenIndex>"`. Token-level anchoring keeps a text box
+  // stuck to a specific chord/lyric even when the line wraps internally
+  // (where line-level anchor would drift because the pair shifted within
+  // the line's bounding box).
+  const [tokenRects, setTokenRects] = useState<Map<string, LineRect>>(
+    new Map(),
+  );
   const [tool, setTool] = useState<Tool>("off");
   const [color, setColor] = useState(COLORS[0]);
   const [fontSize, setFontSize] = useState(16);
@@ -511,6 +519,24 @@ export function AnnotationLayer({
           }
         });
       setLineRects((prev) => (sameRects(prev, next) ? prev : next));
+      const nextTokens = new Map<string, LineRect>();
+      host
+        .querySelectorAll<HTMLElement>(".sr-pair[data-token-index]")
+        .forEach((el) => {
+          const lineEl = el.closest<HTMLElement>("[data-line-index]");
+          if (!lineEl) return;
+          const lineIdx = Number(lineEl.dataset.lineIndex);
+          const tokIdx = Number(el.dataset.tokenIndex);
+          if (!Number.isFinite(lineIdx) || !Number.isFinite(tokIdx)) return;
+          const r = el.getBoundingClientRect();
+          nextTokens.set(`${lineIdx}:${tokIdx}`, {
+            left: r.left - hostRect.left,
+            top: r.top - hostRect.top,
+            width: r.width,
+            height: r.height,
+          });
+        });
+      setTokenRects((prev) => (sameRects(prev, nextTokens) ? prev : nextTokens));
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -590,42 +616,115 @@ export function AnnotationLayer({
     [lineRects],
   );
 
-  // One-time migration: any text box without an anchor — drawn before this
-  // feature existed — gets attached to the line under its current position
-  // and re-saved with relative coords, so future reflows track it. Gated
-  // by a ref so it runs at most once per mount (any later resize will not
-  // re-anchor an already-anchored box and won't shift its stored coords).
+  // Within a given line, pick the chord/lyric pair whose center is nearest
+  // (x, y). Returns null if the line has no token rects (sections, blanks,
+  // chord-only). Used to upgrade a line-only anchor to a token-level anchor
+  // so the box tracks the specific chord/lyric across internal line wraps.
+  const bestTokenInLine = useCallback(
+    (lineIndex: number, x: number, y: number): number | null => {
+      let bestTi: number | null = null;
+      let bestD = Infinity;
+      for (const [key, r] of tokenRects) {
+        const colon = key.indexOf(":");
+        if (colon < 0) continue;
+        if (Number(key.slice(0, colon)) !== lineIndex) continue;
+        const ti = Number(key.slice(colon + 1));
+        const cx = r.left + r.width / 2;
+        const cy = r.top + r.height / 2;
+        const d = (x - cx) ** 2 + (y - cy) ** 2;
+        if (d < bestD) {
+          bestD = d;
+          bestTi = ti;
+        }
+      }
+      return bestTi;
+    },
+    [tokenRects],
+  );
+
+  // Find the best anchor (line + optional token) for a point. Prefer a token
+  // within the line, but fall back to line-only when the line has no tokens
+  // (section/blank/chord-only).
+  const findAnchorAt = useCallback(
+    (
+      x: number,
+      y: number,
+    ): { lineIndex: number; tokenIndex?: number } | null => {
+      const li = findLineAt(x, y);
+      if (li == null) return null;
+      const ti = bestTokenInLine(li, x, y);
+      return ti != null ? { lineIndex: li, tokenIndex: ti } : { lineIndex: li };
+    },
+    [findLineAt, bestTokenInLine],
+  );
+
+  // One-time migration on mount, in two passes:
+  //  1) Legacy boxes without any anchor get attached to the nearest line.
+  //  2) Line-only-anchored boxes get upgraded to token-level (chord/lyric)
+  //     anchor when their line has tokens. Line-only anchor drifts when
+  //     the line wraps internally because x/y is relative to the line's
+  //     bounding box, not the actual pair the user placed the box next to.
+  // Gated by a ref so it runs at most once per mount; later resizes never
+  // re-anchor an already-(token-)anchored box.
   const migratedRef = useRef(false);
   useEffect(() => {
     if (migratedRef.current) return;
     if (lineRects.size === 0 || size.w === 0 || size.h === 0) return;
-    if (!texts.some((t) => !t.anchor)) {
+    if (!texts.some((t) => !t.anchor || t.anchor.tokenIndex == null)) {
       migratedRef.current = true;
       return;
     }
-    // Convert stored coords (which may be in the previous viewBox/ref space)
-    // into host px so we look up the right line.
+    // If any box needs token upgrading but token rects haven't been
+    // measured yet (line and token rects normally batch in the same
+    // measure() pass, but be defensive), wait for the next pass — the
+    // effect re-runs when tokenRects updates.
+    if (
+      tokenRects.size === 0 &&
+      texts.some((t) => t.anchor && t.anchor.tokenIndex == null)
+    ) {
+      return;
+    }
+    // Legacy unanchored coords may be in the prior viewBox/ref space.
     const sx = ref.w > 0 ? size.w / ref.w : 1;
     const sy = ref.h > 0 ? size.h / ref.h : 1;
     const migrated = texts.map((t) => {
-      if (t.anchor) return t;
-      const vx = t.x * sx;
-      const vy = t.y * sy;
-      const idx = findLineAt(vx, vy);
-      if (idx == null) return t;
-      const r = lineRects.get(idx);
-      if (!r) return t;
-      return {
-        ...t,
-        x: vx - r.left,
-        y: vy - r.top,
-        anchor: { lineIndex: idx },
-      };
+      // Pass 1: legacy unanchored → anchor to nearest line+token.
+      if (!t.anchor) {
+        const vx = t.x * sx;
+        const vy = t.y * sy;
+        const a = findAnchorAt(vx, vy);
+        if (!a) return t;
+        if (a.tokenIndex != null) {
+          const r = tokenRects.get(`${a.lineIndex}:${a.tokenIndex}`);
+          if (r) return { ...t, x: vx - r.left, y: vy - r.top, anchor: a };
+        }
+        const r = lineRects.get(a.lineIndex);
+        if (!r) return t;
+        return { ...t, x: vx - r.left, y: vy - r.top, anchor: a };
+      }
+      // Pass 2: line-only anchor → upgrade to token anchor when possible.
+      if (t.anchor.tokenIndex == null) {
+        const lr = lineRects.get(t.anchor.lineIndex);
+        if (!lr) return t;
+        const absX = lr.left + t.x;
+        const absY = lr.top + t.y;
+        const ti = bestTokenInLine(t.anchor.lineIndex, absX, absY);
+        if (ti == null) return t; // line has no tokens — keep as-is
+        const tr = tokenRects.get(`${t.anchor.lineIndex}:${ti}`);
+        if (!tr) return t;
+        return {
+          ...t,
+          x: absX - tr.left,
+          y: absY - tr.top,
+          anchor: { lineIndex: t.anchor.lineIndex, tokenIndex: ti },
+        };
+      }
+      return t;
     });
     migratedRef.current = true;
     if (migrated.some((t, i) => t !== texts[i])) onTextsChange(migrated);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lineRects]);
+  }, [lineRects, tokenRects]);
 
   const eraseAt = useCallback(
     (x: number, y: number) => {
@@ -817,25 +916,41 @@ export function AnnotationLayer({
     if (tool === "text" || tool === "pen") seedRefIfNeeded();
     const [x, y] = point(e);
     if (tool === "text") {
-      // Anchor the box to the line under the pointer so it reflows with that
-      // line when columns/layout change. x/y stored are RELATIVE to that
-      // line's top-left in host px (current size).
+      // Anchor the box to the nearest chord/lyric pair (or line, if the
+      // landed line has none) so it reflows with that pair when columns
+      // reflow or the line wraps internally. x/y are RELATIVE to the
+      // anchor element's top-left in host px (current size).
       const [hx, hy] = pointHost(e);
-      const lineIndex = findLineAt(hx, hy);
-      const r = lineIndex != null ? lineRects.get(lineIndex) : undefined;
+      const a = findAnchorAt(hx, hy);
       const id = crypto.randomUUID();
-      const note: TextNote =
-        lineIndex != null && r
-          ? {
+      let note: TextNote = { id, x, y, text: "", fontSize, color };
+      if (a) {
+        if (a.tokenIndex != null) {
+          const r = tokenRects.get(`${a.lineIndex}:${a.tokenIndex}`);
+          if (r)
+            note = {
               id,
               x: hx - r.left,
               y: hy - r.top,
               text: "",
               fontSize,
               color,
-              anchor: { lineIndex },
-            }
-          : { id, x, y, text: "", fontSize, color };
+              anchor: a,
+            };
+        } else {
+          const r = lineRects.get(a.lineIndex);
+          if (r)
+            note = {
+              id,
+              x: hx - r.left,
+              y: hy - r.top,
+              text: "",
+              fontSize,
+              color,
+              anchor: a,
+            };
+        }
+      }
       onTextsChange([...texts, note]);
       setEditingId(id);
       return;
@@ -1042,12 +1157,25 @@ export function AnnotationLayer({
         )}
       </svg>
 
-      {/* Text boxes are positioned per-anchor against the current line rect,
-          so they reflow when the layout changes (e.g., 2-col ↔ 1-col).
-          Unanchored boxes render at their absolute coords until the
-          auto-migration effect attaches them to a line. */}
+      {/* Text boxes are positioned per-anchor against the current rect of
+          their anchor (chord/lyric token when available, otherwise whole
+          line). Token-level anchor tracks the *specific* pair as it
+          reflows or wraps internally; line-only is the fallback for
+          non-chordpro lines. Unanchored boxes render at their absolute
+          coords until the auto-migration effect attaches them. */}
       {texts.map((t) => {
-        const r = t.anchor ? lineRects.get(t.anchor.lineIndex) : null;
+        let r: LineRect | null | undefined = null;
+        if (t.anchor) {
+          if (t.anchor.tokenIndex != null) {
+            r = tokenRects.get(`${t.anchor.lineIndex}:${t.anchor.tokenIndex}`);
+            // Token rect not measured yet (or no longer present): fall back
+            // to line rect so the box stays close to its lyrics instead of
+            // jumping to the host's top-left.
+            if (!r) r = lineRects.get(t.anchor.lineIndex);
+          } else {
+            r = lineRects.get(t.anchor.lineIndex);
+          }
+        }
         const offX = r ? r.left : 0;
         const offY = r ? r.top : 0;
         return (

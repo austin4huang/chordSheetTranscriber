@@ -171,7 +171,8 @@ export function SheetList({ onOpen, askConflict }: Props) {
         let choice = sticky;
         if (!choice) {
           const ans = await askConflict({
-            title: candidate.title,
+            existing: match,
+            incoming: candidate,
             remaining: Math.max(0, remainingConflicts(i + 1)),
           });
           if (!ans) return null;

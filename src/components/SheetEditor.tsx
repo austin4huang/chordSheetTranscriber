@@ -287,7 +287,11 @@ export function SheetEditor({
     const titleKey = toSave.title.toLowerCase();
     const match = others.find((s) => s.title.toLowerCase() === titleKey);
     if (match) {
-      const ans = await askConflict({ title: toSave.title, remaining: 0 });
+      const ans = await askConflict({
+        existing: match,
+        incoming: toSave,
+        remaining: 0,
+      });
       if (!ans) return; // user cancelled the save
       if (ans.choice === "replace") {
         // Merge current edits into the existing sheet's slot. Keeps its id

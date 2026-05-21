@@ -135,7 +135,7 @@ function LineRow({
   return (
     <div className="sr-line" data-line-index={index}>
       {tokens.map((t, i) => (
-        <span className="sr-pair" key={i}>
+        <span className="sr-pair" data-token-index={i} key={i}>
           <span className="sr-chord">
             {t.chord ? withAccidentals(transformChord(t.chord, ctx)) :" "}
           </span>

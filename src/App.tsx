@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { SheetList } from "./components/SheetList";
 import { SheetEditor } from "./components/SheetEditor";
+import { SheetRenderer } from "./components/SheetRenderer";
 import { getSheet, getSet, whenStorageReady } from "./lib/storage";
 import { initPersistence } from "./lib/persist";
+import type { ChordSheet } from "./lib/types";
 import "./App.css";
 
 type View =
@@ -12,9 +14,41 @@ type View =
 export type ConflictChoice = "replace" | "rename";
 export type ConflictAnswer = { choice: ConflictChoice; applyToAll: boolean };
 export type AskConflict = (info: {
-  title: string;
+  existing: ChordSheet;
+  incoming: ChordSheet;
   remaining: number;
 }) => Promise<ConflictAnswer | null>;
+
+/** Build a short, human-readable diff between two sheets to orient the
+ *  user above the side-by-side previews. Returns the *changes* only — fields
+ *  that match are omitted, so the list is empty when the two sheets are
+ *  metadata-identical (the previews still tell the rest of the story). */
+function summarizeDiff(existing: ChordSheet, incoming: ChordSheet): string[] {
+  const out: string[] = [];
+  if (existing.title !== incoming.title)
+    out.push(`Title: "${existing.title}" → "${incoming.title}"`);
+  if ((existing.artist ?? "") !== (incoming.artist ?? ""))
+    out.push(`Artist: ${existing.artist || "—"} → ${incoming.artist || "—"}`);
+  const exKey = existing.key + (existing.mode === "minor" ? "m" : "");
+  const inKey = incoming.key + (incoming.mode === "minor" ? "m" : "");
+  if (exKey !== inKey) out.push(`Key: ${exKey} → ${inKey}`);
+  if ((existing.tempo ?? null) !== (incoming.tempo ?? null))
+    out.push(`Tempo: ${existing.tempo ?? "—"} → ${incoming.tempo ?? "—"}`);
+  if ((existing.time ?? "") !== (incoming.time ?? ""))
+    out.push(`Time: ${existing.time || "—"} → ${incoming.time || "—"}`);
+  const exLines = existing.lines.length;
+  const inLines = incoming.lines.length;
+  if (exLines !== inLines) {
+    const delta = inLines - exLines;
+    out.push(`Lines: ${exLines} → ${inLines} (${delta > 0 ? "+" : ""}${delta})`);
+  }
+  // Final catch-all: line content changed even if counts match.
+  const norm = (s: ChordSheet) =>
+    s.lines.map((l) => `${l.kind}\t${l.text}`).join("\n");
+  if (exLines === inLines && norm(existing) !== norm(incoming))
+    out.push("Lines differ in content");
+  return out;
+}
 
 export default function App() {
   const [view, setView] = useState<View>({ kind: "list" });
@@ -30,9 +64,11 @@ export default function App() {
   const [storageReady, setStorageReady] = useState(false);
 
   // Conflict modal lives here so both the list (import) and the editor
-  // (save) can prompt through the same UI.
+  // (save) can prompt through the same UI. The modal renders both sheets
+  // side-by-side so the user can compare before choosing.
   const [conflict, setConflict] = useState<{
-    title: string;
+    existing: ChordSheet;
+    incoming: ChordSheet;
     remaining: number;
     resolve: (r: ConflictAnswer | null) => void;
   } | null>(null);
@@ -127,19 +163,60 @@ export default function App() {
           onClick={() => resolveConflict(null)}
         >
           <div
-            className="modal"
+            className="modal modal-compare"
             role="dialog"
             aria-modal="true"
             aria-labelledby="conflict-title"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 id="conflict-title" className="modal-title">
-              A song titled "{conflict.title}" already exists
+              A song titled "{conflict.incoming.title}" already exists
             </h3>
             <p className="modal-body">
-              Replace the existing song, or keep both (the new one is
-              renamed automatically).
+              Compare the two versions below, then choose to replace the
+              existing song or keep both (the incoming one is renamed
+              automatically).
             </p>
+            {(() => {
+              const diff = summarizeDiff(conflict.existing, conflict.incoming);
+              if (diff.length === 0) {
+                return (
+                  <p className="compare-diff compare-diff-empty">
+                    No metadata differences — the versions may still have
+                    different annotations or formatting (see previews).
+                  </p>
+                );
+              }
+              return (
+                <ul className="compare-diff">
+                  {diff.map((line, i) => (
+                    <li key={i}>{line}</li>
+                  ))}
+                </ul>
+              );
+            })()}
+            <div className="compare-grid">
+              <div className="compare-pane">
+                <header className="compare-pane-head">Existing</header>
+                <div className="compare-pane-body">
+                  <SheetRenderer
+                    sheet={conflict.existing}
+                    numberMode={false}
+                    displayKey={conflict.existing.displayKey ?? conflict.existing.key}
+                  />
+                </div>
+              </div>
+              <div className="compare-pane">
+                <header className="compare-pane-head">Incoming</header>
+                <div className="compare-pane-body">
+                  <SheetRenderer
+                    sheet={conflict.incoming}
+                    numberMode={false}
+                    displayKey={conflict.incoming.displayKey ?? conflict.incoming.key}
+                  />
+                </div>
+              </div>
+            </div>
             {conflict.remaining > 0 && (
               <label className="modal-applyall">
                 <input
@@ -181,7 +258,7 @@ export default function App() {
                   })
                 }
               >
-                Replace
+                Replace existing
               </button>
             </div>
           </div>

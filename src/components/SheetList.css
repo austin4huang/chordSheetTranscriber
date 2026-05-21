@@ -811,3 +811,80 @@
   color: #fff;
 }
 .modal-btn.danger:hover { background: #a3312a; border-color: #a3312a; }
+
+/* Wide variant for the import-conflict comparison: shows both sheets
+   side-by-side with a small diff summary above. */
+.modal.modal-compare {
+  max-width: min(1200px, 96vw);
+  display: flex;
+  flex-direction: column;
+  /* Cap the dialog so previews scroll inside it instead of pushing the
+     buttons off-screen on shorter laptops. */
+  max-height: 92vh;
+}
+.modal-compare .compare-diff {
+  margin: 0 0 0.85rem;
+  padding: 0.6rem 0.85rem;
+  background: #f6f8fb;
+  border: 1px solid #e3e8ef;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: #333;
+  list-style: disc inside;
+  line-height: 1.55;
+}
+.modal-compare .compare-diff li { margin: 0; }
+.modal-compare .compare-diff-empty {
+  list-style: none;
+  color: #666;
+  font-style: italic;
+}
+.modal-compare .compare-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.85rem;
+  margin: 0 0 1rem;
+  min-height: 0;        /* let inner panes scroll inside the modal */
+  flex: 1 1 auto;
+}
+.modal-compare .compare-pane {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #dde1e7;
+  border-radius: 8px;
+  background: #fafbfc;
+  min-height: 0;
+  overflow: hidden;
+}
+.modal-compare .compare-pane-head {
+  padding: 0.45rem 0.7rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #4b5563;
+  background: #eef1f5;
+  border-bottom: 1px solid #dde1e7;
+}
+.modal-compare .compare-pane-body {
+  overflow: auto;
+  /* Cap the rendered preview so very long songs don't blow up the modal.
+     The pane has its own scrollbar; the modal stays put. */
+  max-height: 60vh;
+  padding: 0.4rem;
+}
+/* Shrink the embedded SheetRenderer's chrome inside the preview pane so the
+   actual song content has room. The component is the same one used in the
+   editor, but here it's framed by the modal so the heavy padding is overkill. */
+.modal-compare .compare-pane-body .sheet-render {
+  border: none;
+  padding: 0.9rem 1rem;
+  min-height: 0;
+  border-radius: 4px;
+}
+@media (max-width: 760px) {
+  .modal-compare .compare-grid {
+    grid-template-columns: 1fr;
+  }
+  .modal-compare .compare-pane-body { max-height: 42vh; }
+}
