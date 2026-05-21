@@ -480,8 +480,13 @@ export function SheetEditor({
       <div className="editor-toolbar">
         <div className="tb-left">
         <div className="tb-group">
-          <button onClick={onBack} title="Back to library" aria-label="Back">
-            <ArrowLeftIcon />Back
+          <button
+            className="tb-icon-btn"
+            onClick={onBack}
+            title="Back to library"
+            aria-label="Back to library"
+          >
+            <ArrowLeftIcon />
           </button>
         </div>
         <div className="tb-title">{sheet.title}</div>
