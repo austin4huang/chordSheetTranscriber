@@ -207,6 +207,33 @@ export default function App() {
     });
   }, []);
 
+  // Present mode → real fullscreen, so the browser chrome gets out of the
+  // way. Owned here (not in SheetEditor) because the editor is remounted
+  // per song via a `key` prop; managing fullscreen down there would drop
+  // it on every prev/next navigation in a set.
+  // Some browsers reject requestFullscreen if it isn't tied to a user
+  // gesture (toolbar button, F-key, Present button); failures are ignored
+  // so the overlay UX still works when fullscreen is blocked.
+  useEffect(() => {
+    if (!presenting) return;
+    const el = document.documentElement;
+    if (el.requestFullscreen && !document.fullscreenElement) {
+      el.requestFullscreen().catch(() => {});
+    }
+    // If the user leaves fullscreen via the browser's own controls (Esc on
+    // some platforms, gesture, etc.), reflect that by exiting present too.
+    const onChange = () => {
+      if (!document.fullscreenElement) setPresenting(false);
+    };
+    document.addEventListener("fullscreenchange", onChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", onChange);
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      }
+    };
+  }, [presenting]);
+
   if (!storageReady) {
     return <div className="app-loading">Loading your library…</div>;
   }

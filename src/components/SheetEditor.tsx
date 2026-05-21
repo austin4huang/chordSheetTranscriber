@@ -123,32 +123,10 @@ export function SheetEditor({
   const setEditorHidden = onEditorHiddenChange;
   const setPresenting = onPresentingChange;
 
-  // In present mode: enter real fullscreen so address bar / tab strip get
-  // out of the way. The overlay still handles the visuals; the browser
-  // chrome hiding is the whole point of using requestFullscreen here.
-  // Some browsers reject silently if not from a user gesture (we always
-  // are — F-key, toolbar button, Present button) but ignore failures
-  // either way so present-mode UX still works when fullscreen is blocked.
-  useEffect(() => {
-    if (presenting) {
-      const el = document.documentElement;
-      if (el.requestFullscreen && !document.fullscreenElement) {
-        el.requestFullscreen().catch(() => {});
-      }
-      // If the user leaves fullscreen via the browser's own controls (Esc on
-      // some platforms, gesture, etc.), reflect that by exiting present too.
-      const onChange = () => {
-        if (!document.fullscreenElement) setPresenting(false);
-      };
-      document.addEventListener("fullscreenchange", onChange);
-      return () => {
-        document.removeEventListener("fullscreenchange", onChange);
-        if (document.fullscreenElement) {
-          document.exitFullscreen().catch(() => {});
-        }
-      };
-    }
-  }, [presenting, setPresenting]);
+  // Fullscreen lifecycle for present mode is owned by App.tsx — this
+  // component is remounted per song (keyed by sheetId), so managing
+  // requestFullscreen/exitFullscreen here would tear down fullscreen on
+  // every prev/next navigation.
 
   // In present mode: Esc exits; ←/→ flip between songs in the set.
   const navRef = useRef(setNav);
