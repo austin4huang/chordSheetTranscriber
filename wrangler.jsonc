@@ -12,5 +12,19 @@
   },
   "compatibility_flags": [
     "nodejs_compat"
+  ],
+  // Per-IP rate limit on /api/fetch — see src/worker/index.ts. namespace_id
+  // is an arbitrary integer string, scoped to this worker. Period must be 10
+  // or 60. 30 / 60s is generous for a human importing songs but cuts off any
+  // scripted hammering long before it eats into the 100k/day worker quota.
+  "ratelimits": [
+    {
+      "name": "RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": {
+        "limit": 30,
+        "period": 60
+      }
+    }
   ]
 }
