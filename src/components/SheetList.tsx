@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChordSheet } from "../lib/types";
 import type { SongSet } from "../lib/storage";
-import type { AskConflict, ConflictAnswer } from "../App";
+import type { AskConflict, AskImportConfirm, ConflictAnswer } from "../App";
 import {
   listSheets, deleteSheet, saveSheet, emptySheetWithDefaults,
   listSets, saveSet, deleteSet, createdAtOf, createdAtOfSet,
@@ -14,20 +14,26 @@ import {
 import { importChords, toChordSheet } from "../lib/chordImport";
 import {
   DownloadIcon, EditIcon, TrashIcon, PlusIcon, FileImportIcon, LinkIcon,
-  TextImportIcon, PlayIcon, CheckIcon, XIcon, UploadIcon,
+  TextImportIcon, PlayIcon, CheckIcon, XIcon, GearIcon,
 } from "./icons";
 import {
-  getStorageStatus, downloadBackup, restoreBackup, linkFolder,
-  reconnectFolder, unlinkFolder, onLibraryChanged, type StorageStatus,
+  getStorageStatus, onLibraryChanged, onStorageChanged, type StorageStatus,
 } from "../lib/persist";
 import "./SheetList.css";
 
 interface Props {
   onOpen: (sheetId: string, setId?: string | null) => void;
   askConflict: AskConflict;
+  askImportConfirm: AskImportConfirm;
+  onOpenSettings: () => void;
 }
 
-export function SheetList({ onOpen, askConflict }: Props) {
+export function SheetList({
+  onOpen,
+  askConflict,
+  askImportConfirm,
+  onOpenSettings,
+}: Props) {
   const [sheets, setSheets] = useState<ChordSheet[]>(() => listSheets());
   const [sets, setSets] = useState<SongSet[]>(() => listSets());
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -48,14 +54,14 @@ export function SheetList({ onOpen, askConflict }: Props) {
     "modified",
   );
   const [setsSortBy, setSetsSortBy] = useState<"created" | "title">("created");
-  const [storageOpen, setStorageOpen] = useState(false);
+  // Header badge only — the full storage panel lives in Settings now. We
+  // still display the dot+label here as an at-a-glance reminder of where
+  // saves are going, and clicking it opens Settings → Storage.
   const [storageStatus, setStorageStatus] = useState<StorageStatus | null>(null);
-  const [storageMsg, setStorageMsg] = useState<string | null>(null);
   const [drag, setDrag] = useState<
     { setId: string; from: number; over: number | null } | null
   >(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const restoreRef = useRef<HTMLInputElement>(null);
   // Bulk-selection of songs in the "All songs" list, for batch add-to-set
   // or delete. `selectionAnchor` is the last id the user clicked without
   // shift, so a subsequent shift+click can extend the range from there.
@@ -73,13 +79,19 @@ export function SheetList({ onOpen, askConflict }: Props) {
     getStorageStatus().then(setStorageStatus).catch(() => {});
 
   // Load storage status for the header badge, and keep it (and the list) in
-  // sync when the library is replaced externally (folder load / restore).
+  // sync when the library is replaced externally (folder load / restore) or
+  // when storage settings change in the Settings modal.
   useEffect(() => {
     refreshStorage();
-    return onLibraryChanged(() => {
+    const offLib = onLibraryChanged(() => {
       refresh();
       refreshStorage();
     });
+    const offStore = onStorageChanged(refreshStorage);
+    return () => {
+      offLib();
+      offStore();
+    };
   }, []);
 
   // Close the Import menu on outside click / Escape.
@@ -100,19 +112,6 @@ export function SheetList({ onOpen, askConflict }: Props) {
       document.removeEventListener("keydown", onKey);
     };
   }, [importMenuOpen]);
-
-  const storageAction = async (fn: () => Promise<unknown>, ok: string) => {
-    setStorageMsg(null);
-    try {
-      await fn();
-      refresh();
-      await refreshStorage();
-      setStorageMsg(ok);
-    } catch (e) {
-      if ((e as DOMException)?.name === "AbortError") return; // user cancelled
-      setStorageMsg(e instanceof Error ? e.message : "Something went wrong.");
-    }
-  };
 
   const beginRename = (kind: "song" | "set", id: string, current: string) => {
     setRenaming({ kind, id });
@@ -152,6 +151,11 @@ export function SheetList({ onOpen, askConflict }: Props) {
   const importMany = async (
     incoming: ChordSheet[],
   ): Promise<ChordSheet[] | null> => {
+    // Preview gate: show the user what's about to be imported and let them
+    // bail. Per-sheet duplicate-title conflicts still get their own modal
+    // afterwards — this is the "yes, these are the songs I meant" check.
+    const ok = await askImportConfirm(incoming);
+    if (!ok) return null;
     const existing = listSheets();
     const taken = new Set(existing.map((s) => s.title.toLowerCase()));
     let sticky: ConflictAnswer["choice"] | null = null;
@@ -588,12 +592,15 @@ export function SheetList({ onOpen, askConflict }: Props) {
             }
             return (
               <button
-                className="btn-soft storage-badge"
-                onClick={() => setStorageOpen((o) => !o)}
-                title="Storage & backup"
+                className="btn-soft settings-trigger storage-badge"
+                onClick={onOpenSettings}
+                title={`Settings — ${text.toLowerCase()}`}
+                aria-label={`Open settings. Storage: ${text}.`}
               >
                 <span className={`storage-dot is-${dot}`} aria-hidden="true" />
                 <span className="btn-label">{text}</span>
+                <span className="storage-sep" aria-hidden="true">·</span>
+                <GearIcon />
               </button>
             );
           })()}
@@ -608,111 +615,11 @@ export function SheetList({ onOpen, askConflict }: Props) {
               e.target.value = "";
             }}
           />
-          <input
-            ref={restoreRef}
-            type="file"
-            accept="application/json,.json"
-            style={{ display: "none" }}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) storageAction(() => restoreBackup(f), "Library restored.");
-              e.target.value = "";
-            }}
-          />
         </div>
         </div>
       </header>
 
       <div className="list-root">
-      {storageOpen && (
-        <div className="storage-panel">
-          <div className="storage-row">
-            <strong>Storage &amp; backup</strong>
-            <span className="spacer" />
-            <button
-              className="icon-btn"
-              onClick={() => setStorageOpen(false)}
-              title="Close"
-              aria-label="Close storage panel"
-            >
-              <XIcon />
-            </button>
-          </div>
-          <p className="storage-status">
-            {storageStatus?.persistent
-              ? "✓ Persistent storage granted (the browser won't auto-evict your library)."
-              : "Using best-effort browser storage — link a folder below for real durability."}
-          </p>
-
-          <div className="storage-row">
-            <button
-              className="ghost-btn"
-              onClick={downloadBackup}
-              title="Save a .json backup of your library"
-            >
-              <DownloadIcon />Backup
-            </button>
-            <button
-              className="ghost-btn"
-              onClick={() => restoreRef.current?.click()}
-              title="Restore library from a .json backup"
-            >
-              <UploadIcon />Restore
-            </button>
-          </div>
-
-          {storageStatus?.folderSupported ? (
-            <div className="storage-row">
-              {storageStatus.folderName ? (
-                <>
-                  <span className="storage-status">
-                    Folder: <strong>{storageStatus.folderName}</strong>{" "}
-                    {storageStatus.folderConnected
-                      ? "· connected (auto-saving)"
-                      : "· not connected"}
-                  </span>
-                  <span className="spacer" />
-                  {!storageStatus.folderConnected && (
-                    <button
-                      className="ghost-btn"
-                      onClick={() =>
-                        storageAction(reconnectFolder, "Folder reconnected.")
-                      }
-                    >
-                      Reconnect
-                    </button>
-                  )}
-                  <button
-                    className="ghost-btn"
-                    onClick={() =>
-                      storageAction(unlinkFolder, "Folder unlinked.")
-                    }
-                  >
-                    Unlink
-                  </button>
-                </>
-              ) : (
-                <button
-                  className="ghost-btn"
-                  onClick={() =>
-                    storageAction(linkFolder, "Folder linked — auto-saving here.")
-                  }
-                >
-                  Link a device folder (auto-save)
-                </button>
-              )}
-            </div>
-          ) : (
-            <p className="storage-status">
-              This browser can't save to a device folder (Chromium only). Use
-              Save/Restore backup instead.
-            </p>
-          )}
-
-          {storageMsg && <p className="storage-msg">{storageMsg}</p>}
-        </div>
-      )}
-
       {importMode && (
         <form
           className="url-import"

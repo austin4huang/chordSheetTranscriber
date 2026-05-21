@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { Stroke, TextNote } from "../lib/types";
+import { getPrefs, updatePrefs } from "../lib/prefs";
 import "./AnnotationLayer.css";
 
 // Palette shown in the color-picker popover. Black is first as the most
@@ -345,13 +346,13 @@ export function AnnotationLayer({
     new Map(),
   );
   const [tool, setTool] = useState<Tool>("off");
-  // Default to red (index 1 — black is index 0). Black tends to blend with
-  // the printed chord-sheet text, so it's a poor default for a brand-new
-  // annotation despite being a very useful option to *have*.
-  const [color, setColor] = useState(COLORS[1]);
+  // Seed from persisted prefs so the user's last-used pen color and font
+  // size carry across sessions and songs. Changes (via swatch picker or
+  // font stepper) write back to prefs so the next mount picks them up.
+  const [color, setColor] = useState(() => getPrefs().penColor);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const paletteRef = useRef<HTMLDivElement>(null);
-  const [fontSize, setFontSize] = useState(16);
+  const [fontSize, setFontSize] = useState(() => getPrefs().penFontSize);
   const [editingId, setEditingId] = useState<string | null>(null);
   // Two-step confirm for "Clear all": first click arms it (button turns red,
   // tooltip changes to "Click again to confirm"), second click within
@@ -1161,6 +1162,7 @@ export function AnnotationLayer({
   const setSizeFor = (next: number) => {
     const v = Math.min(MAX_FONT, Math.max(MIN_FONT, next));
     setFontSize(v);
+    updatePrefs({ penFontSize: v });
     if (editingId) updateText(editingId, { fontSize: v });
   };
 
@@ -1263,6 +1265,7 @@ export function AnnotationLayer({
                       style={{ background: c }}
                       onClick={() => {
                         setColor(c);
+                        updatePrefs({ penColor: c });
                         setTool("pen");
                         setPaletteOpen(false);
                       }}

@@ -21,6 +21,11 @@ import {
 
 const LIBRARY_FILENAME = "chordsheets-library.json";
 const LIBRARY_CHANGED_EVENT = "cs-library-changed";
+// Fires when folder link/unlink/reconnect or persistent-storage grant
+// changes the StorageStatus. Library content might also have changed
+// (e.g. linkFolder adopting an existing folder); that case still fires
+// LIBRARY_CHANGED_EVENT separately.
+const STORAGE_CHANGED_EVENT = "cs-storage-changed";
 
 // --- tiny IndexedDB key/value (just for the folder handle) -----------------
 // Uses the shared connection from storage.ts so the schema upgrade is
@@ -121,6 +126,13 @@ export function onLibraryChanged(cb: () => void): () => void {
   window.addEventListener(LIBRARY_CHANGED_EVENT, cb);
   return () => window.removeEventListener(LIBRARY_CHANGED_EVENT, cb);
 }
+function emitStorageChanged() {
+  window.dispatchEvent(new Event(STORAGE_CHANGED_EVENT));
+}
+export function onStorageChanged(cb: () => void): () => void {
+  window.addEventListener(STORAGE_CHANGED_EVENT, cb);
+  return () => window.removeEventListener(STORAGE_CHANGED_EVENT, cb);
+}
 
 // --- public status / actions ----------------------------------------------
 
@@ -150,7 +162,9 @@ export async function requestPersistentStorage(): Promise<boolean> {
   try {
     if (navigator.storage?.persisted && (await navigator.storage.persisted()))
       return true;
-    return (await navigator.storage?.persist?.()) ?? false;
+    const granted = (await navigator.storage?.persist?.()) ?? false;
+    if (granted) emitStorageChanged();
+    return granted;
   } catch {
     return false;
   }
@@ -180,12 +194,14 @@ export async function linkFolder(): Promise<string> {
   } else {
     await writeFolderLibrary(h, readStore());
   }
+  emitStorageChanged();
   return h.name;
 }
 
 export async function unlinkFolder(): Promise<void> {
   dirHandle = null;
   await idbDel("folderHandle");
+  emitStorageChanged();
 }
 
 /** Re-grant permission to a previously linked folder (needs a user gesture)
@@ -194,6 +210,7 @@ export async function reconnectFolder(): Promise<boolean> {
   const h = await loadHandle();
   if (!h) return false;
   if (!(await hasPermission(h, true))) return false;
+  emitStorageChanged();
   const fromFolder = await readFolderLibrary(h);
   if (fromFolder) {
     replaceStore(fromFolder, false);
@@ -228,6 +245,15 @@ export async function restoreBackup(file: File): Promise<void> {
     throw new Error("That file isn't a Chord Sheets backup.");
   }
   replaceStore(parsed, true); // write-through also mirrors to the folder
+  emitLibraryChanged();
+}
+
+/** Wipe the library — every song and set deleted. Folder mirror (if any)
+ *  is updated too so the next open doesn't re-hydrate from a stale file.
+ *  Preferences in the `kv` store are NOT touched; those persist a user's
+ *  Settings choices and clearing them would be confusing. */
+export function clearLibrary(): void {
+  replaceStore({ sheets: [], sets: [] }, true);
   emitLibraryChanged();
 }
 

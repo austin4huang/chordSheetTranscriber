@@ -193,7 +193,11 @@
   .list-actions .btn-label { display: none; }
   .list-actions button { padding: 0.5rem; }
   .list-actions button svg { margin-right: 0 !important; }
-  .storage-badge { gap: 0; }
+  /* Badge becomes "gear with status dot": keep a small gap so the dot
+     reads as an indicator on the gear, not stuck inside it. The text
+     label and separator dot are both hidden on mobile (icon-only). */
+  .storage-badge { gap: 0.25rem; }
+  .storage-badge > .storage-sep { display: none; }
   /* Slim the header itself so song rows get more vertical room. */
   .app-header-inner {
     padding: 0.55rem 0.85rem;
@@ -615,6 +619,12 @@
   align-items: center;
   gap: 0.4rem;
 }
+/* Gear icon floats to the right edge of the badge button — dot + label
+   stay hugged to the left while the action affordance sits flush right.
+   The separator dot sits just before the gear (margin-left: auto pushes
+   it along with the gear). */
+.storage-badge > .storage-sep { margin-left: auto; color: #b6bcc6; }
+.storage-badge > svg { color: #4b5563; }
 .storage-dot {
   width: 8px;
   height: 8px;
@@ -943,4 +953,30 @@
     grid-template-columns: 1fr;
   }
   .modal-compare .compare-pane-body { max-height: 42vh; }
+}
+
+/* Import-preview modal: vertical stack of compare-panes (one per incoming
+   sheet). Reuses .compare-pane styling so it matches the conflict modal. */
+.modal-import-preview .import-preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  margin: 0 0 1rem;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.modal-import-preview .compare-pane-body { max-height: 45vh; }
+.modal-import-preview .ip-artist {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #6b7280;
+}
+.modal-import-preview .ip-meta {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #6b7280;
+  font-size: 0.78rem;
 }

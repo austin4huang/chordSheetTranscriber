@@ -2,10 +2,31 @@ import { useEffect, useState } from "react";
 import { SheetList } from "./components/SheetList";
 import { SheetEditor } from "./components/SheetEditor";
 import { SheetRenderer } from "./components/SheetRenderer";
+import { Settings } from "./components/Settings";
 import { getSheet, getSet, whenStorageReady } from "./lib/storage";
 import { initPersistence } from "./lib/persist";
+import { loadPrefs, getPrefs, updatePrefs, onPrefsChange } from "./lib/prefs";
 import type { ChordSheet } from "./lib/types";
 import "./App.css";
+
+// Map the fontScale pref to a numeric CSS variable on <html> so the sheet
+// renderer's `font-size: calc(... * var(--font-scale))` rules pick it up.
+const FONT_SCALE_PX: Record<"sm" | "md" | "lg", number> = {
+  sm: 0.88,
+  md: 1,
+  lg: 1.15,
+};
+function applyFontScale(scale: "sm" | "md" | "lg") {
+  document.documentElement.style.setProperty(
+    "--font-scale",
+    String(FONT_SCALE_PX[scale]),
+  );
+}
+// Flip a class on <html> so SheetRenderer.css can force single-column
+// rendering when the user prefers it, regardless of viewport width.
+function applySingleColumn(single: boolean) {
+  document.documentElement.classList.toggle("pref-single-column", single);
+}
 
 type View =
   | { kind: "list" }
@@ -18,6 +39,10 @@ export type AskConflict = (info: {
   incoming: ChordSheet;
   remaining: number;
 }) => Promise<ConflictAnswer | null>;
+
+/** Ask the user to review the parsed import(s) before any are added to the
+ *  library. Resolves true if they accept, false (or null) if they cancel. */
+export type AskImportConfirm = (incoming: ChordSheet[]) => Promise<boolean>;
 
 /** Build a short, human-readable diff between two sheets to orient the
  *  user above the side-by-side previews. Returns the *changes* only — fields
@@ -53,12 +78,45 @@ function summarizeDiff(existing: ChordSheet, incoming: ChordSheet): string[] {
 export default function App() {
   const [view, setView] = useState<View>({ kind: "list" });
   // Owned here so these view modes survive navigating between songs in a
-  // set (SheetEditor is remounted per song via its `key`).
-  const [numberMode, setNumberMode] = useState(false);
-  const [editorHidden, setEditorHidden] = useState(false);
+  // set (SheetEditor is remounted per song via its `key`). `numberMode` and
+  // `annoToolbarCollapsed` are seeded from persisted prefs once hydration
+  // finishes — see the `whenStorageReady`/`loadPrefs` effect below.
+  const [numberMode, setNumberModeRaw] = useState(false);
+  const [editorHidden, setEditorHiddenRaw] = useState(false);
   const [presenting, setPresenting] = useState(false);
-  const [split, setSplit] = useState(50);
-  const [annoToolbarCollapsed, setAnnoToolbarCollapsed] = useState(false);
+  const [split, setSplitRaw] = useState(50);
+  const [annoToolbarCollapsed, setAnnoToolbarCollapsedRaw] = useState(false);
+  // Wrapped setters: every change to a persisted view-state also writes
+  // through to prefs so the next reload picks up where the user left off.
+  const setNumberMode: typeof setNumberModeRaw = (v) => {
+    setNumberModeRaw((prev) => {
+      const next = typeof v === "function" ? (v as (p: boolean) => boolean)(prev) : v;
+      updatePrefs({ defaultNumberMode: next });
+      return next;
+    });
+  };
+  const setEditorHidden: typeof setEditorHiddenRaw = (v) => {
+    setEditorHiddenRaw((prev) => {
+      const next = typeof v === "function" ? (v as (p: boolean) => boolean)(prev) : v;
+      updatePrefs({ editorHidden: next });
+      return next;
+    });
+  };
+  const setSplit: typeof setSplitRaw = (v) => {
+    setSplitRaw((prev) => {
+      const next = typeof v === "function" ? (v as (p: number) => number)(prev) : v;
+      updatePrefs({ editorSplit: next });
+      return next;
+    });
+  };
+  const setAnnoToolbarCollapsed: typeof setAnnoToolbarCollapsedRaw = (v) => {
+    setAnnoToolbarCollapsedRaw((prev) => {
+      const next = typeof v === "function" ? (v as (p: boolean) => boolean)(prev) : v;
+      updatePrefs({ annoToolbarCollapsed: next });
+      return next;
+    });
+  };
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // Library is loaded asynchronously from IndexedDB on first paint; gate the
   // app on hydration so we never render an "empty library" flash.
   const [storageReady, setStorageReady] = useState(false);
@@ -74,8 +132,39 @@ export default function App() {
   } | null>(null);
   const [conflictApplyAll, setConflictApplyAll] = useState(false);
 
+  // Import-confirm modal — fires once per importMany batch so the user can
+  // review the parsed sheet(s) (titles, key, line counts, visual preview)
+  // before anything is committed. Distinct from the conflict modal, which
+  // only fires per-sheet when there's a duplicate title.
+  const [importPreview, setImportPreview] = useState<{
+    sheets: ChordSheet[];
+    resolve: (accept: boolean) => void;
+  } | null>(null);
+
+  const askImportConfirm: AskImportConfirm = (sheets) =>
+    new Promise<boolean>((resolve) => {
+      if (sheets.length === 0) {
+        resolve(false);
+        return;
+      }
+      setImportPreview({ sheets, resolve });
+    });
+
+  const resolveImport = (accept: boolean) => {
+    importPreview?.resolve(accept);
+    setImportPreview(null);
+  };
+
   const askConflict: AskConflict = (info) =>
     new Promise<ConflictAnswer | null>((resolve) => {
+      // Honor the user's "always do X on conflict" preference — bypass the
+      // modal entirely when set. `applyToAll: false` because the pref is the
+      // sticky thing; we don't want a single import session to override it.
+      const def = getPrefs().conflictDefault;
+      if (def !== "ask") {
+        resolve({ choice: def, applyToAll: false });
+        return;
+      }
       setConflictApplyAll(false);
       setConflict({ ...info, resolve });
     });
@@ -85,11 +174,36 @@ export default function App() {
     setConflict(null);
   };
 
-  // Hydrate the in-memory library from IndexedDB, request persistent storage,
-  // and adopt a linked device folder (if any) — all once per app load.
+  // Hydrate the in-memory library from IndexedDB, load saved preferences,
+  // request persistent storage, and adopt a linked device folder (if any) —
+  // all once per app load. Prefs are seeded into the relevant state slots
+  // after load; live changes flow through `onPrefsChange` below.
   useEffect(() => {
-    void whenStorageReady().then(() => setStorageReady(true));
+    void whenStorageReady()
+      .then(() => loadPrefs())
+      .then(() => {
+        const p = getPrefs();
+        // Use the *raw* setters to seed, so this initial hydration doesn't
+        // immediately write the same values back to prefs.
+        setNumberModeRaw(p.defaultNumberMode);
+        setAnnoToolbarCollapsedRaw(p.annoToolbarCollapsed);
+        setEditorHiddenRaw(p.editorHidden);
+        setSplitRaw(p.editorSplit);
+        applyFontScale(p.fontScale);
+        applySingleColumn(p.singleColumn);
+        setStorageReady(true);
+      });
     void initPersistence();
+  }, []);
+
+  // Live-sync the things prefs control globally (font scale on <html>).
+  // Per-component prefs (pen color, toolbar collapsed default) read via
+  // `getPrefs()` on mount, so this listener only handles app-wide ones.
+  useEffect(() => {
+    return onPrefsChange((p) => {
+      applyFontScale(p.fontScale);
+      applySingleColumn(p.singleColumn);
+    });
   }, []);
 
   if (!storageReady) {
@@ -102,6 +216,8 @@ export default function App() {
       <SheetList
         onOpen={(sheetId, setId = null) => setView({ kind: "edit", sheetId, setId })}
         askConflict={askConflict}
+        askImportConfirm={askImportConfirm}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
     );
   } else {
@@ -157,6 +273,65 @@ export default function App() {
   return (
     <>
       {main}
+      {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
+      {importPreview && (
+        <div
+          className="modal-backdrop"
+          onClick={() => resolveImport(false)}
+        >
+          <div
+            className="modal modal-compare modal-import-preview"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="import-preview-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="import-preview-title" className="modal-title">
+              Import {importPreview.sheets.length}{" "}
+              song{importPreview.sheets.length === 1 ? "" : "s"}?
+            </h3>
+            <p className="modal-body">
+              Review the parsed {importPreview.sheets.length === 1 ? "song" : "songs"} below.
+              Duplicate-title prompts (if any) will follow once you click Import.
+            </p>
+            <div className="import-preview-list">
+              {importPreview.sheets.map((s, i) => (
+                <div key={i} className="compare-pane">
+                  <header className="compare-pane-head">
+                    {s.title}
+                    {s.artist ? <span className="ip-artist"> · {s.artist}</span> : null}
+                    <span className="ip-meta">
+                      {" · "}{s.key}{s.mode === "minor" ? "m" : ""}
+                      {" · "}{s.lines.length} lines
+                    </span>
+                  </header>
+                  <div className="compare-pane-body">
+                    <SheetRenderer
+                      sheet={s}
+                      numberMode={false}
+                      displayKey={s.displayKey ?? s.key}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="modal-actions">
+              <button
+                className="modal-btn"
+                onClick={() => resolveImport(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="modal-btn primary"
+                onClick={() => resolveImport(true)}
+              >
+                Import
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {conflict && (
         <div
           className="modal-backdrop"

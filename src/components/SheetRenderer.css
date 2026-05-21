@@ -30,7 +30,18 @@
 
 .sr-body {
   line-height: 1.5;
-  font-size: 14px;
+  /* --font-scale is set by App.tsx from the persisted `fontScale` pref so
+     users can size all sheets up/down from one place. Defaults to 1. */
+  font-size: calc(14px * var(--font-scale, 1));
+}
+/* Forced single-column mode — opt-in via Settings → Display. Overrides
+   the multi-column auto-layout regardless of viewport width. */
+html.pref-single-column .sr-body {
+  column-width: auto !important;
+  column-count: 1 !important;
+  column-rule: none;
+}
+.sr-body {
   /* Flow into multiple columns when the pane is wide enough (drops back to
      one column when narrow), so long sheets need less vertical scrolling. */
   column-width: 26rem;
@@ -131,7 +142,7 @@
 @media (max-width: 760px) {
   .sheet-render { padding: 1rem 0.85rem; }
   .sr-header h2 { font-size: 1.3rem; }
-  .sr-body { font-size: 13px; column-gap: 1.5rem; }
+  .sr-body { font-size: calc(13px * var(--font-scale, 1)); column-gap: 1.5rem; }
 }
 
 /* Clean output when printing a sheet. */
