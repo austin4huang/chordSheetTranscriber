@@ -752,9 +752,10 @@ export function SheetList({ onOpen, askConflict }: Props) {
             </button>
             <button
               type="submit"
-              className="primary"
+              className="primary url-import-submit"
               disabled={importing || !urlText.trim()}
             >
+              <FileImportIcon />
               {importing ? "Importing…" : "Import"}
             </button>
           </div>
@@ -1093,7 +1094,7 @@ export function SheetList({ onOpen, askConflict }: Props) {
                 }}
                 title="Add selected songs to a set"
               >
-                <option value="">+ Add to set…</option>
+                <option value="">+ Set</option>
                 {sets.map((set) => (
                   <option key={set.id} value={set.id}>
                     {set.name}
@@ -1116,15 +1117,17 @@ export function SheetList({ onOpen, askConflict }: Props) {
               className="ghost-btn bulk-delete"
               onClick={deleteSelected}
               title="Delete the selected songs"
+              aria-label="Delete selected songs"
             >
-              <TrashIcon /> Delete
+              <TrashIcon />
             </button>
             <button
-              className="ghost-btn"
+              className="ghost-btn bulk-cancel"
               onClick={clearSelection}
-              title="Clear the selection"
+              title="Clear selection"
+              aria-label="Clear selection"
             >
-              Cancel
+              <XIcon />
             </button>
           </div>
         )}

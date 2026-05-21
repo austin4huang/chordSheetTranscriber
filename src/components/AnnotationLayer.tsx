@@ -3,7 +3,20 @@ import type { Dispatch, SetStateAction } from "react";
 import type { Stroke, TextNote } from "../lib/types";
 import "./AnnotationLayer.css";
 
-const COLORS = ["#e23b2e", "#1f6dd6", "#1f9d57"];
+// Palette shown in the color-picker popover. Black is first as the most
+// common "highlight a note / write a chord" choice; the rest cover the
+// typical highlighter spread (warm, cool, accent). Adding more colors only
+// makes the popover taller — the toolbar itself stays the same width.
+const COLORS = [
+  "#1a1a1a", // black
+  "#e23b2e", // red
+  "#f59e0b", // amber/orange
+  "#1f9d57", // green
+  "#1f6dd6", // blue
+  "#7c3aed", // violet
+  "#ec4899", // pink
+  "#0891b2", // teal
+];
 const PEN_WIDTH = 2.5;
 const ERASE_RADIUS = 14;
 const MIN_FONT = 10;
@@ -298,8 +311,7 @@ function sameRects<K>(
   return true;
 }
 
-function strokePath(s: Stroke): string {
-  const p = s.points;
+function pointsToPath(p: number[]): string {
   if (p.length < 2) return "";
   let d = `M ${p[0]} ${p[1]}`;
   for (let i = 2; i < p.length; i += 2) d += ` L ${p[i]} ${p[i + 1]}`;
@@ -333,7 +345,12 @@ export function AnnotationLayer({
     new Map(),
   );
   const [tool, setTool] = useState<Tool>("off");
-  const [color, setColor] = useState(COLORS[0]);
+  // Default to red (index 1 — black is index 0). Black tends to blend with
+  // the printed chord-sheet text, so it's a poor default for a brand-new
+  // annotation despite being a very useful option to *have*.
+  const [color, setColor] = useState(COLORS[1]);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const paletteRef = useRef<HTMLDivElement>(null);
   const [fontSize, setFontSize] = useState(16);
   const [editingId, setEditingId] = useState<string | null>(null);
   // Two-step confirm for "Clear all": first click arms it (button turns red,
@@ -381,6 +398,16 @@ export function AnnotationLayer({
       );
     };
     const onKey = (e: KeyboardEvent) => {
+      // Escape reverts any active annotation tool back to cursor mode. Runs
+      // ahead of the modifier check so it works even if a modifier is held,
+      // and ahead of the editable-target check because a textbox is opened
+      // via its own onKeyDown handler before this listener gets to react.
+      if (e.key === "Escape" && tool !== "off") {
+        e.preventDefault();
+        setTool("off");
+        setPaletteOpen(false);
+        return;
+      }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (isEditable(e.target)) return;
       // Delete-key path: only consume the keystroke when there's something
@@ -405,7 +432,7 @@ export function AnnotationLayer({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [editingId, selStrokes, selTexts, annotations, texts, onChange, onTextsChange]);
+  }, [editingId, tool, selStrokes, selTexts, annotations, texts, onChange, onTextsChange]);
 
   // Switching to any non-cursor tool clears the selection. Selection only
   // makes sense in cursor mode.
@@ -415,6 +442,24 @@ export function AnnotationLayer({
       setSelTexts(new Set());
     }
   }, [tool]);
+
+  // Close the color-palette popover on outside click or Escape.
+  useEffect(() => {
+    if (!paletteOpen) return;
+    const onDown = (e: PointerEvent) => {
+      if (!paletteRef.current?.contains(e.target as Node))
+        setPaletteOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPaletteOpen(false);
+    };
+    window.addEventListener("pointerdown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [paletteOpen]);
 
   // Pointerdown anywhere outside an annotation clears the selection. If the
   // click landed on a different (unselected) annotation, that annotation's
@@ -658,6 +703,48 @@ export function AnnotationLayer({
     [findLineAt, bestTokenInLine],
   );
 
+  // Anchor's top-left in ref-px (the coordinate space stroke points live in
+  // when stored relative). Returns null when the anchor's rect isn't
+  // currently measured (briefly, e.g. before the first measure pass) so the
+  // caller can fall back to absolute coords.
+  const anchorRefOrigin = useCallback(
+    (
+      anchor: { lineIndex: number; tokenIndex?: number },
+    ): { x: number; y: number } | null => {
+      let r: LineRect | undefined;
+      if (anchor.tokenIndex != null) {
+        r = tokenRects.get(`${anchor.lineIndex}:${anchor.tokenIndex}`);
+        if (!r) r = lineRects.get(anchor.lineIndex);
+      } else {
+        r = lineRects.get(anchor.lineIndex);
+      }
+      if (!r) return null;
+      const sx = size.w > 0 ? ref.w / size.w : 1;
+      const sy = size.h > 0 ? ref.h / size.h : 1;
+      return { x: r.left * sx, y: r.top * sy };
+    },
+    [lineRects, tokenRects, ref.w, ref.h, size.w, size.h],
+  );
+
+  // Expand a stroke's stored points to absolute ref-px coords, applying the
+  // anchor's current ref-space origin. For unanchored (legacy) strokes,
+  // returns the points unchanged. Same shape so callers can hit-test or
+  // render uniformly without branching.
+  const absStrokePoints = useCallback(
+    (s: Stroke): number[] => {
+      if (!s.anchor) return s.points;
+      const o = anchorRefOrigin(s.anchor);
+      if (!o) return s.points; // not measured yet — best-effort fallback
+      const out = new Array<number>(s.points.length);
+      for (let i = 0; i < s.points.length; i += 2) {
+        out[i] = s.points[i] + o.x;
+        out[i + 1] = s.points[i + 1] + o.y;
+      }
+      return out;
+    },
+    [anchorRefOrigin],
+  );
+
   // One-time migration on mount, in two passes:
   //  1) Legacy boxes without any anchor get attached to the nearest line.
   //  2) Line-only-anchored boxes get upgraded to token-level (chord/lyric)
@@ -670,24 +757,29 @@ export function AnnotationLayer({
   useEffect(() => {
     if (migratedRef.current) return;
     if (lineRects.size === 0 || size.w === 0 || size.h === 0) return;
-    if (!texts.some((t) => !t.anchor || t.anchor.tokenIndex == null)) {
+    const needsTextMigration = texts.some(
+      (t) => !t.anchor || t.anchor.tokenIndex == null,
+    );
+    const needsStrokeMigration = annotations.some((s) => !s.anchor);
+    if (!needsTextMigration && !needsStrokeMigration) {
       migratedRef.current = true;
       return;
     }
-    // If any box needs token upgrading but token rects haven't been
+    // If any item needs token upgrading but token rects haven't been
     // measured yet (line and token rects normally batch in the same
     // measure() pass, but be defensive), wait for the next pass — the
     // effect re-runs when tokenRects updates.
     if (
       tokenRects.size === 0 &&
-      texts.some((t) => t.anchor && t.anchor.tokenIndex == null)
+      (texts.some((t) => t.anchor && t.anchor.tokenIndex == null) ||
+        annotations.some((s) => !s.anchor))
     ) {
       return;
     }
     // Legacy unanchored coords may be in the prior viewBox/ref space.
     const sx = ref.w > 0 ? size.w / ref.w : 1;
     const sy = ref.h > 0 ? size.h / ref.h : 1;
-    const migrated = texts.map((t) => {
+    const migratedTexts = texts.map((t) => {
       // Pass 1: legacy unanchored → anchor to nearest line+token.
       if (!t.anchor) {
         const vx = t.x * sx;
@@ -721,8 +813,49 @@ export function AnnotationLayer({
       }
       return t;
     });
+    // hostToRef: anchor rects are stored in host px; we need them in ref-px
+    // to subtract from stroke points (which live in ref-space).
+    const hx = ref.w > 0 && size.w > 0 ? ref.w / size.w : 1;
+    const hy = ref.h > 0 && size.h > 0 ? ref.h / size.h : 1;
+    const migratedAnnos = annotations.map((s) => {
+      if (s.anchor) return s;
+      const pts = s.points;
+      if (pts.length < 2) return s;
+      // Use the stroke's centroid (mean of all points) as the anchor probe;
+      // it's robust against stroke shape and direction.
+      let cx = 0;
+      let cy = 0;
+      const n = pts.length / 2;
+      for (let i = 0; i < pts.length; i += 2) {
+        cx += pts[i];
+        cy += pts[i + 1];
+      }
+      cx /= n;
+      cy /= n;
+      // Probe is in ref-space; convert to host px to look up an anchor.
+      const probeHostX = cx / hx;
+      const probeHostY = cy / hy;
+      const a = findAnchorAt(probeHostX, probeHostY);
+      if (!a) return s;
+      let rect: LineRect | undefined;
+      if (a.tokenIndex != null)
+        rect = tokenRects.get(`${a.lineIndex}:${a.tokenIndex}`);
+      if (!rect) rect = lineRects.get(a.lineIndex);
+      if (!rect) return s;
+      const ox = rect.left * hx;
+      const oy = rect.top * hy;
+      const next = new Array<number>(pts.length);
+      for (let i = 0; i < pts.length; i += 2) {
+        next[i] = pts[i] - ox;
+        next[i + 1] = pts[i + 1] - oy;
+      }
+      return { ...s, points: next, anchor: a };
+    });
     migratedRef.current = true;
-    if (migrated.some((t, i) => t !== texts[i])) onTextsChange(migrated);
+    if (migratedTexts.some((t, i) => t !== texts[i]))
+      onTextsChange(migratedTexts);
+    if (migratedAnnos.some((a, i) => a !== annotations[i]))
+      onChange(migratedAnnos);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lineRects, tokenRects]);
 
@@ -730,23 +863,24 @@ export function AnnotationLayer({
     (x: number, y: number) => {
       const keep = annotations.filter((s) => {
         const lim = (ERASE_RADIUS + s.width) ** 2;
-        for (let i = 0; i < s.points.length; i += 2) {
-          const dx = s.points[i] - x;
-          const dy = s.points[i + 1] - y;
+        const pts = absStrokePoints(s);
+        for (let i = 0; i < pts.length; i += 2) {
+          const dx = pts[i] - x;
+          const dy = pts[i + 1] - y;
           if (dx * dx + dy * dy <= lim) return false;
         }
         return true;
       });
       if (keep.length !== annotations.length) onChange(keep);
     },
-    [annotations, onChange],
+    [annotations, onChange, absStrokePoints],
   );
 
   // Index of the topmost stroke whose path passes near (x, y), or -1.
   const hitStroke = useCallback(
     (x: number, y: number): number => {
       for (let s = annotations.length - 1; s >= 0; s--) {
-        const pts = annotations[s].points;
+        const pts = absStrokePoints(annotations[s]);
         const lim = (HIT_RADIUS + annotations[s].width) ** 2;
         for (let i = 0; i < pts.length; i += 2) {
           const dx = pts[i] - x;
@@ -756,7 +890,7 @@ export function AnnotationLayer({
       }
       return -1;
     },
-    [annotations],
+    [annotations, absStrokePoints],
   );
   // Shared drag/selection logic, invoked from both the SVG (strokes) and
   // TextBox (text annotations). Selection updates "eagerly" at pointerdown
@@ -980,7 +1114,40 @@ export function AnnotationLayer({
       endDrag();
       return;
     }
-    if (draft && draft.points.length >= 2) onChange([...annotations, draft]);
+    if (draft && draft.points.length >= 2) {
+      // Anchor the finished stroke to the line/token under its centroid
+      // (mean of all sample points) so a multi-token sweep anchors at its
+      // middle rather than its start. Points are stored as ref-px offsets
+      // from the anchor's top-left so the whole stroke translates with
+      // the anchor — same behavior as text boxes.
+      const sw = size.w || 1;
+      const sh = size.h || 1;
+      let cx = 0;
+      let cy = 0;
+      const n = draft.points.length / 2;
+      for (let i = 0; i < draft.points.length; i += 2) {
+        cx += draft.points[i];
+        cy += draft.points[i + 1];
+      }
+      cx /= n;
+      cy /= n;
+      const hx = cx * sw / (ref.w || sw);
+      const hy = cy * sh / (ref.h || sh);
+      const a = findAnchorAt(hx, hy);
+      let finished: Stroke = draft;
+      if (a) {
+        const o = anchorRefOrigin(a);
+        if (o) {
+          const rel = new Array<number>(draft.points.length);
+          for (let i = 0; i < draft.points.length; i += 2) {
+            rel[i] = draft.points[i] - o.x;
+            rel[i + 1] = draft.points[i + 1] - o.y;
+          }
+          finished = { ...draft, points: rel, anchor: a };
+        }
+      }
+      onChange([...annotations, finished]);
+    }
     setDraft(null);
   };
 
@@ -1058,13 +1225,54 @@ export function AnnotationLayer({
               onClick={() => setTool("off")}
               title="Cursor (P) — select text on empty areas, drag annotations when hovering"
               aria-label="Cursor">{CursorIcon}</button>
-            {COLORS.map((c) => (
-              <button key={c}
-                className={`anno-swatch${tool === "pen" && color === c ? " active" : ""}`}
-                style={{ background: c }}
-                onClick={() => { setColor(c); setTool("pen"); }}
-                title="Pen" aria-label={`Pen ${c}`} />
-            ))}
+            <div className="anno-color-picker" ref={paletteRef}>
+              <button
+                className={`anno-swatch${tool === "pen" ? " active" : ""}`}
+                style={{ background: color }}
+                onClick={() => {
+                  // First click: activate the pen tool (so users who don't
+                  // know about the picker can still just click + draw).
+                  // Second click while pen is already active: open palette.
+                  if (tool === "pen") setPaletteOpen((o) => !o);
+                  else {
+                    setTool("pen");
+                    setPaletteOpen(false);
+                  }
+                }}
+                title="Pen — click again to change color"
+                aria-label={`Pen, current color ${color}`}
+                aria-haspopup="menu"
+                aria-expanded={paletteOpen}
+              />
+              <button
+                className="anno-btn anno-color-trigger"
+                onClick={() => setPaletteOpen((o) => !o)}
+                title="Choose pen color"
+                aria-label="Choose pen color"
+              >
+                ▾
+              </button>
+              {paletteOpen && (
+                <div className="anno-color-palette" role="menu">
+                  {COLORS.map((c) => (
+                    <button
+                      key={c}
+                      role="menuitemradio"
+                      aria-checked={color === c}
+                      className={`anno-swatch${color === c ? " active" : ""}`}
+                      style={{ background: c }}
+                      onClick={() => {
+                        setColor(c);
+                        setTool("pen");
+                        setPaletteOpen(false);
+                      }}
+                      title={c}
+                      aria-label={`Pen color ${c}`}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
             <button className={`anno-btn${tool === "text" ? " active" : ""}`}
               onClick={() => setTool("text")} title="Text box (T)" aria-label="Text box"
               style={{ fontWeight: 700 }}>T</button>
@@ -1133,7 +1341,7 @@ export function AnnotationLayer({
           selStrokes.has(i) ? (
             <path
               key={`sel-${i}`}
-              d={strokePath(s)}
+              d={pointsToPath(absStrokePoints(s))}
               stroke="rgba(42,108,220,0.35)"
               strokeWidth={s.width + 8}
               fill="none"
@@ -1145,13 +1353,13 @@ export function AnnotationLayer({
           ) : null,
         )}
         {annotations.map((s, i) => (
-          <path key={i} d={strokePath(s)} stroke={s.color} strokeWidth={s.width}
+          <path key={i} d={pointsToPath(absStrokePoints(s))} stroke={s.color} strokeWidth={s.width}
             fill="none" strokeLinecap="round" strokeLinejoin="round"
             vectorEffect="non-scaling-stroke"
             style={tool === "off" ? { cursor: "move" } : undefined} />
         ))}
         {draft && (
-          <path d={strokePath(draft)} stroke={draft.color} strokeWidth={draft.width}
+          <path d={pointsToPath(draft.points)} stroke={draft.color} strokeWidth={draft.width}
             fill="none" strokeLinecap="round" strokeLinejoin="round"
             vectorEffect="non-scaling-stroke" />
         )}

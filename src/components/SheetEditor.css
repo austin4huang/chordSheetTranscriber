@@ -388,3 +388,59 @@
 .present-exit svg { margin-right: 0 !important; }
 .present-exit:hover,
 .present-exit:focus-visible { opacity: 1; }
+
+/* ─── Mobile / narrow-screen layout ──────────────────────────────────────
+   The 3-region desktop toolbar can't fit on a phone in one row, and the
+   side-by-side editor/preview panes are unusable below ~600px. Below the
+   shared 760px breakpoint we let the toolbar wrap, stack the panes
+   vertically, and shrink the present-mode chrome. */
+@media (max-width: 760px) {
+  .editor-toolbar {
+    flex-wrap: wrap;
+    column-gap: 0.5rem;
+    row-gap: 0.45rem;
+    padding: 0.5rem 0.65rem;
+  }
+  .tb-divider { display: none; }
+  .tb-left, .tb-right { flex: 1 1 auto; min-width: 0; gap: 0.55rem; }
+  /* Key + Chords/Numbers cluster drops to its own row and scrolls
+     horizontally if the controls still overflow on very narrow phones. */
+  .tb-center {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+    overflow-x: auto;
+    padding-bottom: 0.15rem;
+    scrollbar-width: none;
+  }
+  .tb-center::-webkit-scrollbar { display: none; }
+  .tb-title { max-width: 12ch; font-size: 0.88rem; }
+  .editor-toolbar button { padding: 0.38rem 0.7rem; font-size: 0.84rem; }
+  .editor-toolbar .save-btn { min-width: 0; padding: 0.42rem 0.7rem; }
+  /* PDF label is redundant next to its icon when space is tight. */
+  .btn-pdf-label { display: none; }
+
+  .editor-body {
+    flex-direction: column;
+    padding: 0.5rem;
+    gap: 0.5rem;
+  }
+  /* Editor pane stacks above the preview; ignore the desktop split width
+     and cap height so the preview always has room. */
+  .editor-pane.is-editor {
+    width: 100% !important;
+    flex: 0 0 auto;
+    max-height: 35vh;
+  }
+  .editor-pane.is-editor textarea { font-size: 14px; }
+  /* Horizontal column-resizer is meaningless when panes are stacked. */
+  .editor-resizer { display: none; }
+  /* When the editor is hidden, the peek tab is the only way to bring it
+     back — make it a bit larger for fingers. */
+  .editor-peek { width: 22px; height: 80px; font-size: 1.3rem; }
+
+  /* Present mode: reduce gutter so the song fills the screen. */
+  .present-overlay { padding: 2.6rem 0.85rem 1.25rem; }
+  .present-setnav { top: 0.5rem; gap: 0.45rem; font-size: 0.8rem; }
+  .present-setnav button { padding: 0.3rem 0.55rem; font-size: 0.78rem; }
+  .present-exit { top: 0.45rem; right: 0.5rem; padding: 0.3rem 0.45rem; }
+}

@@ -141,3 +141,46 @@
   outline: 2px solid #2a2a2a;
   outline-offset: 1px;
 }
+
+/* Color picker — one always-visible "current color" swatch plus a small
+   caret that opens a palette popover. Lets us offer many colors without
+   stretching the toolbar. */
+.anno-color-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+.anno-toolbar .anno-color-trigger {
+  width: 0.95rem;          /* narrower than a regular .anno-btn */
+  font-size: 0.7rem;
+  color: #666;
+  padding: 0;
+}
+.anno-color-palette {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 6;
+  display: grid;
+  grid-template-columns: repeat(4, 1.7rem);
+  gap: 0.3rem;
+  padding: 0.45rem;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid #dcdcdc;
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+.anno-color-palette .anno-swatch {
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 50%;
+  border: 1px solid #d0d0d0;
+  cursor: pointer;
+  padding: 0;
+}
+.anno-color-palette .anno-swatch:hover { transform: scale(1.08); }
+.anno-color-palette .anno-swatch.active {
+  outline: 2px solid #2a2a2a;
+  outline-offset: 1px;
+}

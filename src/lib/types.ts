@@ -8,12 +8,16 @@ export interface SheetLine {
                          // comment: "# Tempo - 140"
 }
 
-// A free-hand annotation stroke. Points are flattened [x0,y0,x1,y1,...] in
-// pixels relative to the rendered sheet's content box.
+// A free-hand annotation stroke. Points are flattened [x0,y0,x1,y1,...].
+// When `anchor` is set, points are offsets in ref-px from the anchor
+// element's top-left, so the whole stroke translates with the anchor when
+// layout reflows (column changes, internal line wraps). Without `anchor`
+// (legacy), points are absolute ref-px in the sheet's content box.
 export interface Stroke {
   color: string;
   width: number;
   points: number[];
+  anchor?: { lineIndex: number; tokenIndex?: number };
 }
 
 // A free-positioned text annotation. When `anchor` is set, x/y are pixels

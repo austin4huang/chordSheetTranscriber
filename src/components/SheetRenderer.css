@@ -125,6 +125,15 @@
   text-shadow: 0 0 0.5px currentColor;
 }
 
+/* Narrow screens: shrink the sheet's outer gutter so song text uses more
+   of the viewport (the column-width drop to single column happens
+   automatically below ~26rem). */
+@media (max-width: 760px) {
+  .sheet-render { padding: 1rem 0.85rem; }
+  .sr-header h2 { font-size: 1.3rem; }
+  .sr-body { font-size: 13px; column-gap: 1.5rem; }
+}
+
 /* Clean output when printing a sheet. */
 @media print {
   .sheet-render {

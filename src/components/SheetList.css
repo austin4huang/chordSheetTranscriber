@@ -194,6 +194,20 @@
   .list-actions button { padding: 0.5rem; }
   .list-actions button svg { margin-right: 0 !important; }
   .storage-badge { gap: 0; }
+  /* Slim the header itself so song rows get more vertical room. */
+  .app-header-inner {
+    padding: 0.55rem 0.85rem;
+    gap: 0.6rem;
+  }
+  .app-header-inner h1 { font-size: 1.1rem; }
+  /* Tighter outer padding around the lists. */
+  .list-root { padding: 0.85rem 0.85rem; }
+  /* A set row with many trailing buttons (Play / PDF / Delete) can overflow
+     on a narrow screen. Allow the row to wrap so buttons fall to a second
+     line instead of getting clipped. */
+  .set-head { flex-wrap: wrap; row-gap: 0.35rem; }
+  /* The bulk-bar already wraps; tighten its gap so it doesn't dominate. */
+  .bulk-bar { gap: 0.35rem; padding: 0.45rem 0.6rem; }
 }
 .banner {
   display: flex;
@@ -332,11 +346,14 @@
 .bulk-bar .bulk-delete {
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
+  justify-content: center;
   color: #c33;
   border-color: #e9c2c0;
+  padding: 0.35rem;
+  width: 1.95rem;
+  height: 1.95rem;
 }
-.bulk-bar .bulk-delete:hover { background: #fff0f0; }
+.bulk-bar .bulk-delete:hover:not(:disabled) { background: #fff0f0; }
 .bulk-bar .bulk-delete svg { margin-right: 0 !important; }
 .sheet-item .open {
   flex: 1;
@@ -427,7 +444,23 @@
   font-size: 0.85rem;
   cursor: pointer;
 }
-.ghost-btn:hover { background: #f4f6fb; }
+.ghost-btn:hover:not(:disabled) { background: #f4f6fb; }
+.ghost-btn:disabled {
+  color: #9aa3b1;
+  border-color: #e3e6ec;
+  background: #f7f8fa;
+  cursor: not-allowed;
+}
+/* Bulk-bar cancel: icon-only, square footprint to match the trash button. */
+.bulk-bar .bulk-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem;
+  width: 1.95rem;
+  height: 1.95rem;
+}
+.bulk-bar .bulk-cancel svg { margin-right: 0 !important; }
 .sets-hint { color: #777; font-size: 0.88rem; margin: 0 0 0.5rem; line-height: 1.5; }
 .sets { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.5rem; }
 /* No overflow:hidden here — it would clip the Add-song search dropdown.
@@ -553,6 +586,29 @@
 .url-import-actions { display: flex; align-items: center; gap: 0.5rem; }
 .url-import-actions .spacer { flex: 1; }
 .url-import-hint { color: #999; font-size: 0.78rem; }
+/* Submit button — match the visual weight of the top-header Import action
+   (.list-actions .btn-primary). The plain "primary" class on its own had
+   no styling, so the button rendered as a default browser button. */
+.url-import-submit {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.95rem;
+  background: #2a6cdc;
+  color: #fff;
+  border: 1px solid #2a6cdc;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: filter 0.12s, background 0.12s;
+}
+.url-import-submit:hover:not(:disabled) { filter: brightness(1.08); }
+.url-import-submit:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  filter: grayscale(0.2);
+}
 
 .storage-badge {
   display: inline-flex;
