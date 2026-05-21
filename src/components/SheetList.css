@@ -33,6 +33,16 @@
   white-space: nowrap;
   flex: 0 0 auto;
 }
+.app-header-inner h1.app-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.app-brand-icon {
+  height: 1.5em;
+  width: auto;
+  display: inline-block;
+}
 
 .list-root {
   width: 100%;

@@ -258,7 +258,7 @@ export function downloadBackup(): void {
 export async function restoreBackup(file: File): Promise<void> {
   const parsed = JSON.parse(await file.text());
   if (!isStored(parsed)) {
-    throw new Error("That file isn't a Chord Sheets backup.");
+    throw new Error("That file isn't a ChordSheets backup.");
   }
   await replaceStore(parsed, true); // write-through also mirrors to the folder
   emitLibraryChanged();

@@ -505,7 +505,10 @@ export function SheetList({
     <div className="list-page">
       <header className="app-header">
         <div className="app-header-inner">
-        <h1>Chord Sheets</h1>
+        <h1 className="app-brand">
+          <img src="/rest-icon.svg" alt="" className="app-brand-icon" aria-hidden="true" />
+          ChordSheets
+        </h1>
         <div className="list-actions">
           <button
             className="btn-primary"
