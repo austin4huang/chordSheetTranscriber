@@ -19,7 +19,13 @@ export interface ImportedSheet {
   lines: SheetLine[];
 }
 
+// Try the same-origin Cloudflare Worker route first (see src/worker/index.ts) —
+// it's fully under our control and isn't subject to the rate-limits and origin
+// blocks the public proxies impose on our workers.dev domain. Public proxies
+// stay as fallbacks for the rare case where the worker route itself misbehaves
+// or during local dev outside the @cloudflare/vite-plugin path.
 const PROXIES = [
+  (u: string) => `/api/fetch?url=${encodeURIComponent(u)}`,
   (u: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
   (u: string) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
 ];
