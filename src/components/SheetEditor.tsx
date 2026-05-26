@@ -263,6 +263,10 @@ export function SheetEditor({
   const renderRef = useRef<HTMLDivElement>(null);
   const presentOverlayRef = useRef<HTMLDivElement>(null);
   const [exporting, setExporting] = useState(false);
+  // On phones the editor and preview don't fit side-by-side, so we show one at
+  // a time and let this toggle switch between them. Ignored by the desktop
+  // layout (both panes show there). Defaults to the formatted sheet.
+  const [mobileView, setMobileView] = useState<"editor" | "preview">("preview");
   const dragging = useRef(false);
 
   const onResizeDown = useCallback((e: React.PointerEvent) => {
@@ -730,8 +734,35 @@ export function SheetEditor({
           </button>
         </div>
         </div>
+        {/* Phone-only: switch between editing and the formatted sheet instead
+            of cramming both on screen. Hidden on desktop via CSS. */}
+        <div
+          className="seg-toggle tb-viewtoggle"
+          role="group"
+          aria-label="Show editor or preview"
+        >
+          <button
+            type="button"
+            className={mobileView === "editor" ? "active" : ""}
+            aria-pressed={mobileView === "editor"}
+            onClick={() => {
+              setMobileView("editor");
+              setEditorHidden(false);
+            }}
+          >
+            Editor
+          </button>
+          <button
+            type="button"
+            className={mobileView === "preview" ? "active" : ""}
+            aria-pressed={mobileView === "preview"}
+            onClick={() => setMobileView("preview")}
+          >
+            Preview
+          </button>
+        </div>
       </div>
-      <div className="editor-body" ref={bodyRef}>
+      <div className="editor-body" ref={bodyRef} data-mview={mobileView}>
         {!editorHidden && (
         <>
         <div className="editor-pane is-editor" style={{ width: `${split}%` }}>

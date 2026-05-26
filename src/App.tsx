@@ -331,6 +331,28 @@ function ImportPreviewModal({
 }) {
   const cancel = useCallback(() => onResolve(false), [onResolve]);
   const ref = useModal(cancel);
+  // Flip through the songs one at a time instead of one long scroll. Clamp so
+  // a (hypothetical) shrinking list can't strand us past the end.
+  const [page, setPage] = useState(0);
+  const total = sheets.length;
+  const idx = Math.min(page, total - 1);
+  const multi = total > 1;
+  const go = useCallback(
+    (delta: number) => setPage((p) => Math.min(total - 1, Math.max(0, p + delta))),
+    [total],
+  );
+  // Left/right arrows flip pages (only meaningful for a multi-song set).
+  useEffect(() => {
+    if (!multi) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") { e.preventDefault(); go(-1); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); go(1); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [multi, go]);
+
+  const s = sheets[idx];
   return (
     <div className="modal-backdrop" onClick={cancel}>
       <div
@@ -343,32 +365,58 @@ function ImportPreviewModal({
         onClick={(e) => e.stopPropagation()}
       >
         <h3 id="import-preview-title" className="modal-title">
-          Import {sheets.length} song{sheets.length === 1 ? "" : "s"}?
+          Import {total} song{total === 1 ? "" : "s"}?
         </h3>
         <p className="modal-body">
-          Review the parsed {sheets.length === 1 ? "song" : "songs"} below.
+          Review the parsed {total === 1 ? "song" : "songs"}
+          {multi ? " — flip through with the arrows below" : ""}.
           Duplicate-title prompts (if any) will follow once you click Import.
         </p>
+        {multi && (
+          <div className="ip-pager">
+            <button
+              type="button"
+              className="ip-pager-btn"
+              onClick={() => go(-1)}
+              disabled={idx === 0}
+              aria-label="Previous song"
+            >
+              ‹
+            </button>
+            <span className="ip-pager-pos">
+              Song {idx + 1} of {total}
+            </span>
+            <button
+              type="button"
+              className="ip-pager-btn"
+              onClick={() => go(1)}
+              disabled={idx === total - 1}
+              aria-label="Next song"
+            >
+              ›
+            </button>
+          </div>
+        )}
         <div className="import-preview-list">
-          {sheets.map((s, i) => (
-            <div key={i} className="compare-pane">
-              <header className="compare-pane-head">
-                {s.title}
-                {s.artist ? <span className="ip-artist"> · {s.artist}</span> : null}
-                <span className="ip-meta">
-                  {" · "}{s.key}{s.mode === "minor" ? "m" : ""}
-                  {" · "}{s.lines.length} lines
-                </span>
-              </header>
-              <div className="compare-pane-body">
-                <SheetRenderer
-                  sheet={s}
-                  numberMode={false}
-                  displayKey={s.displayKey ?? s.key}
-                />
-              </div>
+          {/* Keyed by index so the renderer remounts per page — preview scroll
+              resets to the top of each song when you flip. */}
+          <div key={idx} className="compare-pane">
+            <header className="compare-pane-head">
+              {s.title}
+              {s.artist ? <span className="ip-artist"> · {s.artist}</span> : null}
+              <span className="ip-meta">
+                {" · "}{s.key}{s.mode === "minor" ? "m" : ""}
+                {" · "}{s.lines.length} lines
+              </span>
+            </header>
+            <div className="compare-pane-body">
+              <SheetRenderer
+                sheet={s}
+                numberMode={false}
+                displayKey={s.displayKey ?? s.key}
+              />
             </div>
-          ))}
+          </div>
         </div>
         <div className="modal-actions">
           <button className="modal-btn" onClick={cancel}>
@@ -379,7 +427,7 @@ function ImportPreviewModal({
             data-autofocus
             onClick={() => onResolve(true)}
           >
-            Import
+            Import {multi ? `all ${total}` : ""}
           </button>
         </div>
       </div>

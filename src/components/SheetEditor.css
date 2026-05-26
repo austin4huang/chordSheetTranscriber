@@ -3,12 +3,17 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 1rem;
+  /* Wrap to extra rows when the controls don't fit instead of overlapping or
+     cramming; row-gap keeps wrapped rows from touching. */
+  flex-wrap: wrap;
+  gap: 0.55rem 1rem;
   padding: 0.55rem 1rem;
   background: #2a2a2a;
   color: #fff;
   border-bottom: 1px solid #444;
 }
+/* The Editor/Preview switch is a phone-only affordance. */
+.tb-viewtoggle { display: none; }
 .editor-toolbar .spacer { flex: 1; }
 .tb-group { display: flex; align-items: center; gap: 0.6rem; }
 /* Three-region toolbar: left cluster, centered key/notation controls, and
@@ -410,47 +415,75 @@
    vertically, and shrink the present-mode chrome. */
 @media (max-width: 760px) {
   .editor-toolbar {
-    flex-wrap: wrap;
     column-gap: 0.5rem;
     row-gap: 0.45rem;
     padding: 0.5rem 0.65rem;
   }
   .tb-divider { display: none; }
-  .tb-left, .tb-right { flex: 1 1 auto; min-width: 0; gap: 0.55rem; }
-  /* Key + Chords/Numbers cluster drops to its own row and scrolls
-     horizontally if the controls still overflow on very narrow phones. */
+  /* Row 1: back/title + actions on one row. The title side grows and
+     ellipsizes; the action buttons keep their natural size (they can't
+     ellipsize), so the title absorbs any squeeze. The cluster wraps to a
+     second row only on extremely narrow screens rather than clipping. */
+  /* basis 0 so the wrap calc treats the title side as collapsible — it
+     ellipsizes to share row 1 with the actions instead of bumping them to a
+     new row based on the full (un-truncated) title width. */
+  .tb-left { flex: 1 1 0; min-width: 0; gap: 0.55rem; }
+  .tb-right { flex: 0 0 auto; gap: 0.55rem; justify-content: flex-end; }
+  /* Row 2: the key/notation cluster, moved after the side regions so it
+     wraps onto its own row, and free to wrap onto further rows rather than
+     scrolling sideways — every control stays reachable. */
   .tb-center {
+    order: 4;
     flex: 1 1 100%;
+    flex-wrap: wrap;
     justify-content: flex-start;
-    overflow-x: auto;
-    padding-bottom: 0.15rem;
-    scrollbar-width: none;
+    gap: 0.45rem 0.6rem;
   }
-  .tb-center::-webkit-scrollbar { display: none; }
+  .tb-center .tb-group { flex-wrap: wrap; gap: 0.45rem 0.6rem; }
   .tb-title { max-width: 12ch; font-size: 0.88rem; }
-  .editor-toolbar button { padding: 0.38rem 0.7rem; font-size: 0.84rem; }
-  .editor-toolbar .save-btn { min-width: 0; padding: 0.42rem 0.7rem; }
+  .editor-toolbar button { padding: 0.4rem 0.7rem; font-size: 0.84rem; }
+  .editor-toolbar .save-btn { min-width: 0; padding: 0.44rem 0.7rem; }
   /* PDF label is redundant next to its icon when space is tight. */
   .btn-pdf-label { display: none; }
 
+  /* Row 3: the Editor/Preview switch, full width with finger-sized targets. */
+  .tb-viewtoggle {
+    display: flex;
+    order: 5;
+    flex: 1 1 100%;
+  }
+  .tb-viewtoggle button { flex: 1 1 0; padding: 0.5rem 0; font-size: 0.9rem; }
+
+  /* Show one pane at a time, full size — the toggle's data-mview picks which.
+     This replaces the cramped side-by-side / stacked layout. */
   .editor-body {
     flex-direction: column;
     padding: 0.5rem;
-    gap: 0.5rem;
+    gap: 0;
   }
-  /* Editor pane stacks above the preview; ignore the desktop split width
-     and cap height so the preview always has room. */
+  .editor-pane,
   .editor-pane.is-editor {
     width: 100% !important;
-    flex: 0 0 auto;
-    max-height: 35vh;
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
   }
-  .editor-pane.is-editor textarea { font-size: 14px; }
-  /* Horizontal column-resizer is meaningless when panes are stacked. */
-  .editor-resizer { display: none; }
-  /* When the editor is hidden, the peek tab is the only way to bring it
-     back — make it a bit larger for fingers. */
-  .editor-peek { width: 22px; height: 80px; font-size: 1.3rem; }
+  .editor-pane h3 { display: none; }    /* the toggle already labels the pane */
+  .editor-pane .hint { display: none; } /* reclaim height for the textarea */
+  /* 16px keeps mobile Safari from auto-zooming when the textarea is focused. */
+  .editor-pane.is-editor textarea { font-size: 16px; }
+  .editor-body[data-mview="preview"] .editor-pane.is-editor { display: none; }
+  .editor-body[data-mview="editor"] .editor-pane:not(.is-editor) { display: none; }
+  /* The desktop split/collapse chrome is replaced by the toggle on phones. */
+  .editor-resizer,
+  .editor-peek { display: none; }
+
+  /* Smooth, self-contained finger scrolling within whichever pane is shown. */
+  .editor-pane textarea,
+  .editor-pane > .sheet-render {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
 
   /* Present mode: reduce gutter so the song fills the screen. */
   .present-overlay { padding: 2.6rem 0.85rem 1.25rem; }

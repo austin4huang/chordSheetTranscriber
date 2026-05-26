@@ -987,7 +987,39 @@
   flex: 1 1 auto;
   min-height: 0;
 }
-.modal-import-preview .compare-pane-body { max-height: 45vh; }
+/* One song shows at a time now, so give the preview a little more room. */
+.modal-import-preview .compare-pane-body { max-height: 55vh; }
+/* Pager: ‹ / › flip between songs in a multi-song set, with a position label. */
+.ip-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.85rem;
+  margin: 0 0 0.7rem;
+}
+.ip-pager-pos {
+  font-size: 0.82rem;
+  color: #4b5563;
+  font-variant-numeric: tabular-nums;
+  min-width: 9ch;
+  text-align: center;
+}
+.ip-pager-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  background: #fff;
+  color: #1f2937;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.ip-pager-btn:hover:not(:disabled) { background: #eef1f5; }
+.ip-pager-btn:disabled { opacity: 0.4; cursor: default; }
 .modal-import-preview .ip-artist {
   font-weight: 400;
   text-transform: none;
