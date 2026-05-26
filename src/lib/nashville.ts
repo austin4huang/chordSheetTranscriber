@@ -117,6 +117,46 @@ export function transposeChord(input: string, fromKey: string, toKey: string): s
   return out;
 }
 
+// Split a bracket's contents into individual chord symbols when it holds more
+// than one — whitespace-separated ("D G A") or run-together capitals ("DG").
+// A new chord begins at each uppercase root letter A–G that isn't a slash-bass
+// note; whitespace also separates. Returns the chords in order, or null when
+// the contents aren't a clean run of ≥2 chords (a lyric, a marker like "N.C.",
+// or just one chord) — callers then treat the bracket as a single token and
+// leave it unchanged.
+export function splitChords(content: string): string[] | null {
+  const n = content.length;
+  const isRoot = (c: string) => c >= "A" && c <= "G";
+  const tokens: string[] = [];
+  let i = 0;
+  while (i < n) {
+    while (i < n && /\s/.test(content[i])) i++; // skip separators
+    if (i >= n) break;
+    if (!isRoot(content[i])) return null; // every chord must start on a root
+    let j = i + 1;
+    while (j < n) {
+      const c = content[j];
+      if (/\s/.test(c) || isRoot(c)) break; // next chord or separator
+      if (c === "/") {
+        // Keep a slash-bass note ("/F#") attached to the current chord.
+        const k = j + 1;
+        if (k < n && isRoot(content[k])) {
+          j = k + 1;
+          if (j < n && (content[j] === "#" || content[j] === "b")) j++;
+          continue;
+        }
+        break;
+      }
+      j++;
+    }
+    const tok = content.slice(i, j);
+    if (!parseChord(tok)) return null; // bail out on any non-chord piece
+    tokens.push(tok);
+    i = j;
+  }
+  return tokens.length >= 2 ? tokens : null;
+}
+
 const SUPER_DIGITS: Record<string, string> = {
   "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
   "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",

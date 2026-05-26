@@ -11,10 +11,10 @@ import {
 import type { ChordSheet, Stroke, TextNote } from "../lib/types";
 import {
   linesToText, textToSheet, saveSheet, updateSheet, listSheets,
-  nextUniqueTitle, replaceSheet,
+  nextUniqueTitle, replaceSheet, looksLikeChordOnly,
 } from "../lib/storage";
 import type { AskConflict } from "../App";
-import { noteToPitchClass, keyPrefersFlats } from "../lib/nashville";
+import { noteToPitchClass, keyPrefersFlats, transposeChord, splitChords } from "../lib/nashville";
 import { SheetRenderer } from "./SheetRenderer";
 import { exportSongRenderedPdf } from "../lib/pdfExport";
 import { DownloadIcon, ArrowLeftIcon, XIcon, PresentIcon } from "./icons";
@@ -47,6 +47,55 @@ function spellKey(pc: number, flats: boolean): string {
 // F (major or its relatives) is a flat key even though its name has no "b";
 // keyPrefersFlats handles that. Explicit sharps/flats still win.
 const isFlatSpelling = keyPrefersFlats;
+
+// Token matcher for chord-only lines — mirrors SheetRenderer.transformBarLine
+// so a "Transcribe" rewrite produces exactly what the transposed preview shows
+// (bar-lines `|`/`:` and lowercase words are left untouched).
+const BARLINE_CHORD_RE = /[A-G](?:#|b)?[A-Za-z0-9°+#b()/-]*/g;
+
+// Rewrite the raw editor text so every chord and the {key:} directive are
+// expressed in `toKey` instead of `fromKey`. Operates on the raw text (rather
+// than the parsed sheet) to preserve the user's exact formatting — chord-only
+// spacing, comments, blank lines. Classification matches `textToSheet`, and
+// the transpose matches the renderer, so the result equals the current preview
+// in ASCII form (the editor keeps `#`/`b`; the preview prettifies to ♯/♭).
+function transposeEditorText(text: string, fromKey: string, toKey: string): string {
+  return text
+    .split(/\r?\n/)
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return line; // blank
+      // {key: X} / {key: Xm}: swap the note, keep the surrounding text + mode.
+      const keyDir = line.match(/^(\s*\{key:\s*)([A-G](?:#|b)?)(m?\s*\}.*)$/i);
+      if (keyDir) return keyDir[1] + toKey + keyDir[3];
+      // Other directives ({title:}, {tempo:}…) and section headers: untouched.
+      if (trimmed.startsWith("{") || /^\[section:/i.test(trimmed)) return line;
+      // ChordPro lyric line: transpose each bracketed chord in place. A
+      // bracket holding several chords ("[D G A]" / "[DG]") transposes each;
+      // single chords / non-chord content take the null path, unchanged.
+      if (/\[[^\]]+\]/.test(line))
+        return line.replace(/\[([^\]]+)\]/g, (_full, c: string) => {
+          const parts = splitChords(c);
+          const out = parts
+            ? parts.map((t) => transposeChord(t, fromKey, toKey)).join(" ")
+            : transposeChord(c, fromKey, toKey);
+          return `[${out}]`;
+        });
+      // Chord-only line: transpose each chord token, leaving bar-lines alone.
+      // A token may itself be run-together chords ("DG") — split and transpose
+      // each, matching the renderer and the bracketed-chord path.
+      if (looksLikeChordOnly(line))
+        return line.replace(BARLINE_CHORD_RE, (tok) => {
+          const parts = splitChords(tok);
+          return parts
+            ? parts.map((t) => transposeChord(t, fromKey, toKey)).join(" ")
+            : transposeChord(tok, fromKey, toKey);
+        });
+      // Plain lyric / comment line.
+      return line;
+    })
+    .join("\n");
+}
 
 interface SetNav {
   name: string;
@@ -489,6 +538,19 @@ export function SheetEditor({
   // treated as transposed.
   const transposed = pc !== keyIndex(sheet.key);
 
+  // Bake the current transposition into the editor text: rewrite every chord
+  // and the {key:} directive from the song's key into the display key, so the
+  // source now *is* the displayed key (songKey == displayKey, no more on-the-
+  // fly mapping). After this, chords you type match the preview verbatim.
+  // displayKey/preferFlats resync to the new song key via the {key:}-directive
+  // effect above; this just marks the song dirty for the user to Save.
+  const onTranscribe = useCallback(() => {
+    // Parse the latest text (not the deferred `sheet`) for the current key.
+    const fromKey = textToSheet(text, initial).key;
+    const next = transposeEditorText(text, fromKey, displayKey);
+    if (next !== text) setText(next);
+  }, [text, initial, displayKey]);
+
   return (
     <div className="editor-root">
       <div className="editor-toolbar">
@@ -632,6 +694,15 @@ export function SheetEditor({
             title={`Reset to original key (${prettyKey(sheet.key)})`}
           >
             ↺ {prettyKey(sheet.key)}
+          </button>
+          <button
+            type="button"
+            className="key-apply"
+            onClick={onTranscribe}
+            disabled={numberMode || !transposed}
+            title={`Rewrite the editor's chords into ${prettyKey(displayKey)} — bakes this transposition into the source so new chords match the preview as typed`}
+          >
+            ✓ Transcribe to {prettyKey(displayKey)}
           </button>
         </div>
         <div

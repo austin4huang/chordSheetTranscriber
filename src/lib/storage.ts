@@ -458,7 +458,7 @@ function isChordToken(s: string): boolean {
   return CHORD_TOKEN_RE.test(t) && parseChord(t) !== null;
 }
 
-function looksLikeChordOnly(line: string): boolean {
+export function looksLikeChordOnly(line: string): boolean {
   const t = line.trim();
   if (!t) return false;
   // Inline bracketed chords mean it's a chordpro lyric line, not chord-only.

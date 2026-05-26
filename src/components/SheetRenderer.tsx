@@ -1,6 +1,6 @@
 import type { Dispatch, ReactNode, Ref, SetStateAction } from "react";
 import type { ChordSheet, SheetLine, Stroke, TextNote } from "../lib/types";
-import { chordToNumber, transposeChord } from "../lib/nashville";
+import { chordToNumber, transposeChord, splitChords } from "../lib/nashville";
 import { AnnotationLayer } from "./AnnotationLayer";
 import "./SheetRenderer.css";
 
@@ -69,13 +69,22 @@ function prettyAccidentals(s: string): string {
   return s.replace(/#/g, "♯").replace(/b/g, "♭");
 }
 
+function transformOneChord(chord: string, ctx: XformCtx): string {
+  return ctx.numberMode
+    ? chordToNumber(chord, ctx.songKey, { keyMode: ctx.songMode })
+    : transposeChord(chord, ctx.songKey, ctx.displayKey);
+}
+
 function transformChord(chord: string, ctx: XformCtx): string {
   try {
-    return prettyAccidentals(
-      ctx.numberMode
-        ? chordToNumber(chord, ctx.songKey, { keyMode: ctx.songMode })
-        : transposeChord(chord, ctx.songKey, ctx.displayKey),
-    );
+    // A bracket may hold several chords ("[D G A]" / "[DG]"); transform each
+    // independently. Single chords (and non-chord content) take the null path
+    // and are transformed as one token, unchanged from before.
+    const parts = splitChords(chord);
+    const out = parts
+      ? parts.map((c) => transformOneChord(c, ctx)).join(" ")
+      : transformOneChord(chord, ctx);
+    return prettyAccidentals(out);
   } catch {
     return chord;
   }
@@ -84,11 +93,13 @@ function transformChord(chord: string, ctx: XformCtx): string {
 function transformBarLine(line: string, ctx: XformCtx): string {
   return line.replace(/([A-G](?:#|b)?[A-Za-z0-9°+#b()/-]*)/g, (tok) => {
     try {
-      return prettyAccidentals(
-        ctx.numberMode
-          ? chordToNumber(tok, ctx.songKey, { keyMode: ctx.songMode })
-          : transposeChord(tok, ctx.songKey, ctx.displayKey),
-      );
+      // A single matched token may itself be run-together chords ("DG");
+      // split and transform each, matching the bracketed-chord behavior.
+      const parts = splitChords(tok);
+      const out = parts
+        ? parts.map((c) => transformOneChord(c, ctx)).join(" ")
+        : transformOneChord(tok, ctx);
+      return prettyAccidentals(out);
     } catch {
       return tok;
     }

@@ -213,6 +213,20 @@
 .editor-toolbar .key-reset:hover:not(:disabled) { background: #333; filter: none; }
 .editor-toolbar .key-reset:disabled { opacity: 0; pointer-events: none; }
 
+.editor-toolbar .key-apply {
+  background: transparent;
+  border: 1px solid #3b7d52;
+  color: #6fcf8e;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  padding: 0.35rem 0.6rem;
+}
+.editor-toolbar .key-apply:hover:not(:disabled) {
+  background: #20331f;
+  filter: none;
+}
+.editor-toolbar .key-apply:disabled { opacity: 0; pointer-events: none; }
+
 /* Segmented Chords | Numbers toggle */
 .seg-toggle {
   display: inline-flex;
