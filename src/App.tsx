@@ -33,7 +33,10 @@ type View =
   | { kind: "list" }
   | { kind: "edit"; sheetId: string; setId: string | null };
 
-export type ConflictChoice = "replace" | "rename";
+// replace: overwrite the existing song. rename: keep both (incoming is
+// auto-renamed). skip: keep the existing song untouched and don't import the
+// duplicate (a set import still references the existing copy so it stays whole).
+export type ConflictChoice = "replace" | "rename" | "skip";
 export type ConflictAnswer = { choice: ConflictChoice; applyToAll: boolean };
 export type AskConflict = (info: {
   existing: ChordSheet;
@@ -427,7 +430,7 @@ function ImportPreviewModal({
             data-autofocus
             onClick={() => onResolve(true)}
           >
-            Import {multi ? `all ${total}` : ""}
+            {multi ? "Continue" : "Import"}
           </button>
         </div>
       </div>
@@ -468,9 +471,9 @@ function ConflictModal({
           A song titled "{incoming.title}" already exists
         </h3>
         <p className="modal-body">
-          Compare the two versions below, then choose to replace the
-          existing song or keep both (the incoming one is renamed
-          automatically).
+          Compare the two versions below, then keep both (the incoming one is
+          renamed automatically), keep your existing song and skip this one, or
+          replace the existing song.
         </p>
         {diff.length === 0 ? (
           <p className="compare-diff compare-diff-empty">
@@ -521,7 +524,15 @@ function ConflictModal({
         )}
         <div className="modal-actions">
           <button className="modal-btn" onClick={cancel}>
-            Cancel
+            Cancel import
+          </button>
+          <button
+            className="modal-btn"
+            onClick={() =>
+              onResolve({ choice: "skip", applyToAll: applyAll })
+            }
+          >
+            Keep existing
           </button>
           <button
             className="modal-btn primary"

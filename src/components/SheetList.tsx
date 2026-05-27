@@ -183,6 +183,14 @@ export function SheetList({
           choice = ans.choice;
           if (ans.applyToAll) sticky = ans.choice;
         }
+        if (choice === "skip") {
+          // Keep the existing song untouched; don't import the duplicate. Still
+          // reference the existing copy so an imported set stays complete and
+          // the rest of the batch carries on (Cancel is the only thing that
+          // aborts the whole import).
+          saved.push(match);
+          continue;
+        }
         if (choice === "replace") {
           // Preserve id + createdAt so existing set references still resolve.
           const replaced: ChordSheet = {

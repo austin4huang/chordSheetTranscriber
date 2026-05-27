@@ -1323,6 +1323,11 @@ export function AnnotationLayer({
         preserveAspectRatio="none"
         style={{
           pointerEvents: interactive ? "auto" : "none",
+          // In cursor mode let the browser own touch gestures so a finger drag
+          // scrolls (and pinch zooms) the sheet — taps still hit strokes to
+          // select them. Only an active drawing/move/eraser/text tool needs to
+          // capture the whole gesture, so it switches to `none` then.
+          touchAction: tool === "off" ? "auto" : "none",
           cursor:
             tool === "eraser"
               ? "cell"

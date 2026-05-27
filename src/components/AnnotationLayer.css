@@ -1,9 +1,10 @@
-/* Drawing surface, anchored to the sheet's scroll content. */
+/* Drawing surface, anchored to the sheet's scroll content. `touch-action` is
+   set inline per the active tool (auto in cursor mode so finger-drag scrolls;
+   none while a drawing tool captures the gesture) — see AnnotationLayer.tsx. */
 .anno-svg {
   position: absolute;
   top: 0;
   left: 0;
-  touch-action: none;
 }
 
 /* Floating toolbar — stays pinned top-right while the sheet scrolls. */

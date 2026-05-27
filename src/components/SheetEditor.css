@@ -12,8 +12,10 @@
   color: #fff;
   border-bottom: 1px solid #444;
 }
-/* The Editor/Preview switch is a phone-only affordance. */
-.tb-viewtoggle { display: none; }
+/* The Editor/Preview switch is a phone-only affordance. Scoped to
+   .editor-toolbar so it outranks `.seg-toggle { display: inline-flex }` (the
+   element carries both classes) and stays hidden on desktop. */
+.editor-toolbar .tb-viewtoggle { display: none; }
 .editor-toolbar .spacer { flex: 1; }
 .tb-group { display: flex; align-items: center; gap: 0.6rem; }
 /* Three-region toolbar: left cluster, centered key/notation controls, and
@@ -378,6 +380,10 @@
   z-index: 1000;
   background: #fff;
   overflow: auto;
+  /* Momentum finger-scrolling on iOS, and don't let an over-scroll bounce
+     bubble out to the page behind the overlay. */
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   padding: 2.25rem 2.5rem 3rem;
 }
 .present-overlay .sheet-render {
@@ -446,8 +452,9 @@
   /* PDF label is redundant next to its icon when space is tight. */
   .btn-pdf-label { display: none; }
 
-  /* Row 3: the Editor/Preview switch, full width with finger-sized targets. */
-  .tb-viewtoggle {
+  /* Row 3: the Editor/Preview switch, full width with finger-sized targets.
+     Matches the desktop hide rule's specificity so it wins inside the query. */
+  .editor-toolbar .tb-viewtoggle {
     display: flex;
     order: 5;
     flex: 1 1 100%;
