@@ -102,12 +102,19 @@ async function extractItems(file: File): Promise<Item[][]> {
   return pages;
 }
 
-// Chord extensions ("7", "9", "sus4", "(b9)") are often typeset as a smaller
-// glyph raised above the chord's baseline. PDF extraction puts them on their
-// own near-baseline, so row grouping splits "F#m7" into an "F#m" chord row and
-// a stray "7" row that then looks like a lyric. Merge each superscript back
-// onto the chord token it sits at the end of, before rows are formed.
-const EXTENSION_RE = /^[0-9#b()+\-/]+$/;
+// Chord extensions ("7", "9", "sus4", "(b9)", "2(no3)") are often typeset as a
+// smaller glyph raised above the chord's baseline. PDF extraction puts them on
+// their own near-baseline, so row grouping splits "F#m7" into an "F#m" chord
+// row and a stray "7" row that then looks like a lyric. Merge each superscript
+// back onto the chord token it sits at the end of, before rows are formed.
+//
+// Besides digits/accidentals/parens, extensions carry a small vocabulary of
+// alpha tokens ("add9", "sus4", "(no3)", "(omit3)", "maj7", "min", "dim",
+// "aug", "alt"). Allow those so a whole "2(no3)" superscript reattaches rather
+// than splitting off; a digit is still required (below) so ordinary lyric
+// superscripts don't get pulled in.
+const EXTENSION_RE =
+  /^(?:maj|min|add|sus|omit|no|aug|dim|alt|[0-9#b()+\-/])+$/i;
 
 function mergeSuperscripts(items: Item[]): Item[] {
   const consumed = new Set<number>();
@@ -335,11 +342,19 @@ function mergeChordOverLyric(chordRow: Item[], lyricRow: Item[]): string {
   for (const ins of insertions) {
     out = out.slice(0, ins.idx) + `[${ins.chord}]` + out.slice(ins.idx);
   }
-  return out;
+  return collapseSpaces(out);
 }
 
 function chordOnlyRowToText(row: Item[]): string {
   return row.map((i) => i.text.trim()).filter(Boolean).join(" ");
+}
+
+// PDFs pad lyrics with extra spaces so a chord sits visually above the right
+// syllable. Once chords are inlined as [C] markers anchored to their word, that
+// padding is just noise — collapse runs of spaces between words back to one.
+// Applied only to final line text, never to the internal alignment string.
+function collapseSpaces(s: string): string {
+  return s.replace(/ {2,}/g, " ").trim();
 }
 
 // Emit a chord line, peeling off parenthetical performance annotations
@@ -461,7 +476,7 @@ function emitRows(rows: Item[][], lines: SheetLine[]): void {
     }
     if (cur.kind === "lyric") {
       // Lyric with no chord row above
-      lines.push({ kind: "chordpro", text: reconstructLine(cur.row).text });
+      lines.push({ kind: "chordpro", text: collapseSpaces(reconstructLine(cur.row).text) });
       i++;
       continue;
     }
