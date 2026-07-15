@@ -92,11 +92,17 @@ export function keyPrefersFlats(key: string): boolean {
 
 // Transpose a chord symbol from one key to another, shifting the root (and
 // any slash bass) while preserving quality/extension text verbatim. Returns
-// the input unchanged for non-chords or a zero-interval transpose.
+// the input unchanged for non-chords. Even at a zero interval (e.g. an
+// enharmonic key change like A# → Bb) the notes are re-spelled to match the
+// target key's accidental preference.
 export function transposeChord(input: string, fromKey: string, toKey: string): string {
   if (!parseChord(input)) return input;
   const shift = ((noteToPitchClass(toKey) - noteToPitchClass(fromKey)) % 12 + 12) % 12;
-  if (shift === 0) return input;
+  // Nothing to do when there's neither a transposition nor a change in
+  // accidental spelling. But an enharmonic key change (e.g. A# → Bb) is a
+  // zero interval with a flipped spelling preference, so fall through and
+  // re-spell in that case.
+  if (shift === 0 && keyPrefersFlats(fromKey) === keyPrefersFlats(toKey)) return input;
   // Spell accidentals to match the target key: a flat key (e.g. "Eb", "Bb")
   // yields flats, otherwise sharps.
   const scale = keyPrefersFlats(toKey) ? FLAT_SCALE : SHARP_SCALE;
