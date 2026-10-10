@@ -136,6 +136,28 @@ html.pref-single-column .sr-body {
   text-shadow: 0 0 0.5px currentColor;
 }
 
+/* Chord extensions (7, sus4, add9, °…) ride above the root the way lead
+   sheets print them: smaller and raised, so a dense chart reads as root
+   letters with detail attached rather than one long run of characters. The
+   minor "m" deliberately stays full size at the baseline.
+
+   Opt out via Settings → Display, which puts .pref-inline-extensions on
+   <html> and drops the span back to ordinary inline text. */
+.sr-ext {
+  font-size: 0.68em;
+  vertical-align: 0.5em;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  /* The raised glyphs sit inside the existing line box — no extra leading. */
+  line-height: 1;
+}
+html.pref-inline-extensions .sr-ext {
+  font-size: 1em;
+  vertical-align: baseline;
+  letter-spacing: normal;
+  line-height: inherit;
+}
+
 /* Narrow screens: shrink the sheet's outer gutter so song text uses more
    of the viewport (the column-width drop to single column happens
    automatically below ~26rem). */

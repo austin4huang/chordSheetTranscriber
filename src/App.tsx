@@ -28,6 +28,14 @@ function applyFontScale(scale: "sm" | "md" | "lg") {
 function applySingleColumn(single: boolean) {
   document.documentElement.classList.toggle("pref-single-column", single);
 }
+// Likewise for chord extensions. The renderer always emits the .sr-ext
+// spans, so this class alone decides whether they ride above the root or
+// print inline at full size. Inverted on purpose: raised is the default, and
+// prefs hydrate asynchronously, so keying off the *opt-out* class means the
+// first paint is already correct instead of flashing inline and reflowing.
+function applyRaiseExtensions(raise: boolean) {
+  document.documentElement.classList.toggle("pref-inline-extensions", !raise);
+}
 
 type View =
   | { kind: "list" }
@@ -195,6 +203,7 @@ export default function App() {
         setSplitRaw(p.editorSplit);
         applyFontScale(p.fontScale);
         applySingleColumn(p.singleColumn);
+        applyRaiseExtensions(p.raiseExtensions);
         setStorageReady(true);
       });
     void initPersistence();
@@ -207,6 +216,7 @@ export default function App() {
     return onPrefsChange((p) => {
       applyFontScale(p.fontScale);
       applySingleColumn(p.singleColumn);
+      applyRaiseExtensions(p.raiseExtensions);
     });
   }, []);
 

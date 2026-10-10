@@ -212,6 +212,17 @@ export function Settings({ onClose }: Props) {
               <option value="single">Always single column</option>
             </select>
           </div>
+          <div className="settings-row">
+            <label htmlFor="pref-extensions">Chord extensions</label>
+            <select
+              id="pref-extensions"
+              value={prefs.raiseExtensions ? "raised" : "inline"}
+              onChange={(e) => patch({ raiseExtensions: e.target.value === "raised" })}
+            >
+              <option value="raised">Raised (Em⁷, Gsus⁴)</option>
+              <option value="inline">Inline (Em7, Gsus4)</option>
+            </select>
+          </div>
         </section>
         )}
 

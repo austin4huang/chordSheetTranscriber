@@ -26,6 +26,10 @@ export interface Prefs {
   editorHidden: boolean;
   /** When true, force single-column sheet rendering regardless of width. */
   singleColumn: boolean;
+  /** When true, chord extensions (7, sus4, add9, °…) print smaller and
+   *  raised above the root, as on a lead sheet. The minor "m" always stays
+   *  full size on the baseline. Off prints them inline at full size. */
+  raiseExtensions: boolean;
   /** How an import conflict is resolved when none is sticky:
    *   - "ask": always show the comparison modal (default)
    *   - "replace": silently replace the existing song
@@ -42,6 +46,7 @@ export const DEFAULTS: Prefs = {
   editorSplit: 50,
   editorHidden: false,
   singleColumn: false,
+  raiseExtensions: true,
   conflictDefault: "ask",
 };
 

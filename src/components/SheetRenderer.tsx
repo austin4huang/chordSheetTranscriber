@@ -71,39 +71,11 @@ function prettyAccidentals(s: string): string {
 
 function transformOneChord(chord: string, ctx: XformCtx): string {
   return ctx.numberMode
-    ? chordToNumber(chord, ctx.songKey, { keyMode: ctx.songMode })
+    // superscriptExtensions off: the raised look is applied visually below
+    // (as styled markup), so number mode must not also bake in Unicode
+    // superscript digits — that would double up on "1⁷".
+    ? chordToNumber(chord, ctx.songKey, { keyMode: ctx.songMode, superscriptExtensions: false })
     : transposeChord(chord, ctx.songKey, ctx.displayKey);
-}
-
-function transformChord(chord: string, ctx: XformCtx): string {
-  try {
-    // A bracket may hold several chords ("[D G A]" / "[DG]"); transform each
-    // independently. Single chords (and non-chord content) take the null path
-    // and are transformed as one token, unchanged from before.
-    const parts = splitChords(chord);
-    const out = parts
-      ? parts.map((c) => transformOneChord(c, ctx)).join(" ")
-      : transformOneChord(chord, ctx);
-    return prettyAccidentals(out);
-  } catch {
-    return chord;
-  }
-}
-
-function transformBarLine(line: string, ctx: XformCtx): string {
-  return line.replace(/([A-G](?:#|b)?[A-Za-z0-9°+#b()/-]*)/g, (tok) => {
-    try {
-      // A single matched token may itself be run-together chords ("DG");
-      // split and transform each, matching the bracketed-chord behavior.
-      const parts = splitChords(tok);
-      const out = parts
-        ? parts.map((c) => transformOneChord(c, ctx)).join(" ")
-        : transformOneChord(tok, ctx);
-      return prettyAccidentals(out);
-    } catch {
-      return tok;
-    }
-  });
 }
 
 // Wrap ♯/♭ glyphs in a styled span so they read clearly against the small
@@ -115,6 +87,81 @@ function withAccidentals(text: string): ReactNode {
       ? <span className="sr-acc" key={i}>{p}</span>
       : p,
   );
+}
+
+// Split a transformed chord into the part that prints at full size — the root
+// letter or scale degree, its accidental, and a minor "m" — and the extension
+// that rides above it. Bass notes stay full size, as lead sheets print them.
+// Letter roots are uppercase A–G, so the lowercase "b" of a number-mode degree
+// ("b3") can't be mistaken for a root.
+const CHORD_SHAPE = /^([A-G](?:#|b)?|[#b]?[1-7])(min|m(?!aj))?([^/]*)(\/.+)?$/;
+
+// Bracket contents are free text ("N.C.", "Capo 2", "2x"), and a stray leading
+// A–G would otherwise make the remainder float up as a bogus extension. Only
+// raise a tail that is built from real extension vocabulary.
+const EXTENSION_SHAPE = /^(?:maj|add|sus|dim|aug|alt|no|°|\+|[0-9#b()Δ,.-])+$/i;
+
+function renderOneChord(display: string, key: number): ReactNode {
+  const m = CHORD_SHAPE.exec(display);
+  if (!m || (m[3] && !EXTENSION_SHAPE.test(m[3]))) {
+    return <span key={key}>{withAccidentals(prettyAccidentals(display))}</span>;
+  }
+  const [, head, minor, ext, bass] = m;
+  return (
+    <span key={key}>
+      {withAccidentals(prettyAccidentals(head))}
+      {minor}
+      {/* Already raised and shrunk, so accidentals inside an extension get
+          the plain glyph rather than the enlarged .sr-acc treatment. */}
+      {ext && <span className="sr-ext">{prettyAccidentals(ext)}</span>}
+      {bass && withAccidentals(prettyAccidentals(bass))}
+    </span>
+  );
+}
+
+function renderChord(chord: string, ctx: XformCtx): ReactNode {
+  try {
+    // A bracket may hold several chords ("[D G A]" / "[DG]"); transform each
+    // independently. Single chords (and non-chord content) take the null path
+    // and are transformed as one token, unchanged from before.
+    const parts = splitChords(chord);
+    if (!parts) return renderOneChord(transformOneChord(chord, ctx), 0);
+    return parts.map((c, i) => (
+      <span key={i}>
+        {i > 0 && " "}
+        {renderOneChord(transformOneChord(c, ctx), 0)}
+      </span>
+    ));
+  } catch {
+    return chord;
+  }
+}
+
+function renderBarLine(line: string, ctx: XformCtx): ReactNode {
+  // Capturing split: even indices are the separators ("| ", " |"), odd indices
+  // the chord tokens.
+  const pieces = line.split(/([A-G](?:#|b)?[A-Za-z0-9°+#b()/-]*)/g);
+  return pieces.map((piece, i) => {
+    if (i % 2 === 0 || !piece) return piece;
+    try {
+      // A single matched token may itself be run-together chords ("DG");
+      // split and transform each, matching the bracketed-chord behavior.
+      const parts = splitChords(piece);
+      if (!parts) return renderOneChord(transformOneChord(piece, ctx), i);
+      return (
+        <span key={i}>
+          {parts.map((c, j) => (
+            <span key={j}>
+              {j > 0 && " "}
+              {renderOneChord(transformOneChord(c, ctx), 0)}
+            </span>
+          ))}
+        </span>
+      );
+    } catch {
+      return piece;
+    }
+  });
 }
 
 function LineRow({
@@ -137,7 +184,7 @@ function LineRow({
   if (line.kind === "chord-only") {
     return (
       <div className="sr-chordonly" data-line-index={index}>
-        {withAccidentals(transformBarLine(line.text, ctx))}
+        {renderBarLine(line.text, ctx)}
       </div>
     );
   }
@@ -148,7 +195,7 @@ function LineRow({
       {tokens.map((t, i) => (
         <span className="sr-pair" data-token-index={i} key={i}>
           <span className="sr-chord">
-            {t.chord ? withAccidentals(transformChord(t.chord, ctx)) :" "}
+            {t.chord ? renderChord(t.chord, ctx) :" "}
           </span>
           <span className="sr-lyric">{t.text || " "}</span>
         </span>
