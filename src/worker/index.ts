@@ -46,6 +46,12 @@ const BROWSER_UA =
 // reference-recording dock embeds Spotify's player (see SpotifyDock.tsx). It
 // is deliberately only frame-src — we embed the iframe as served and don't
 // load Spotify's IFrame API, so no script-src exception is needed.
+//
+// This constant only reaches responses this Worker actually produces, which is
+// the SPA fallback below: Cloudflare serves a request matching a static asset
+// without invoking the Worker at all. Those responses get the same headers
+// from public/_headers, which is the mirror of this policy — change one and
+// change the other.
 const CSP =
   "default-src 'self'; " +
   "img-src 'self' data: blob:; " +

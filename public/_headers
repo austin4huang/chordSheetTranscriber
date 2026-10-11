@@ -1,0 +1,23 @@
+# Security headers for responses served straight out of the static-asset store.
+#
+# Cloudflare answers a request that matches an asset directly, WITHOUT invoking
+# src/worker/index.ts — so withSecurityHeaders() there never sees "/", any JS or
+# CSS bundle, or any icon, and before this file they all shipped with no CSP at
+# all. Those responses are covered here.
+#
+# The two mechanisms cover disjoint paths, so both are needed:
+#   * matches an asset      -> Worker skipped      -> this file
+#   * matches no asset      -> Worker runs,
+#                              SPA fallback        -> withSecurityHeaders()
+# Cloudflare does not apply _headers rules to Worker-generated responses, which
+# is why the Worker keeps its own copy rather than deferring to this one.
+#
+# KEEP IN SYNC with the CSP constant in src/worker/index.ts — the two policies
+# are meant to be identical, and that file documents why each directive is
+# there. This file is never itself served as an asset.
+
+/*
+  Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; frame-src https://open.spotify.com; worker-src 'self' blob:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Permissions-Policy: interest-cohort=()
