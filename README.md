@@ -125,14 +125,16 @@ src/
     SheetEditor.tsx       # editor + toolbar (transpose, save, present, ...)
     SheetRenderer.tsx     # the chord/lyric layout used in preview and PDF
     AnnotationLayer.tsx   # pen / text / eraser overlay on the renderer
+    SpotifyDock.tsx       # per-song reference recording (embed + app handoff)
     icons.tsx             # shared inline SVG icons
   lib/
     pdfParser.ts          # PDF → ChordPro extraction
     pdfExport.ts          # render → PDF (single song or whole set)
     chordImport.ts        # Ultimate-Guitar / pasted-text importer
     nashville.ts          # key / number-system / transposition helpers
-    storage.ts            # localStorage-backed library
+    storage.ts            # IndexedDB-backed library (in-memory cache + writes)
     persist.ts            # device-folder linking + persistent-storage request
+    ids.ts                # UUIDs, with a fallback off secure-context origins
     types.ts              # shared types (ChordSheet, SheetLine, Stroke, ...)
 ```
 
@@ -156,6 +158,19 @@ inline and have variable height, so use the dynamic-measurement API
 sets needs a small adjustment since off-screen rows aren't mounted —
 either don't virtualize inside an expanded set, or use the virtualizer's
 `scrollToIndex` to pull a target row into view before drop.
+
+## Multi-device sync
+
+The library is per-browser and per-origin, so a laptop and a phone hold
+separate copies. Moving one across is Settings → Storage → **Backup**, then
+**Restore** on the other device (restore replaces rather than merges). The
+folder-link option mirrors every write to a local folder, but it needs the
+File System Access API and so is Chrome/Edge desktop only.
+
+Real sync isn't built. [`docs/sync.md`](docs/sync.md) works through two ways
+to add it — a private GitHub repo for a single technical user, and a Worker
+backend if the app ever has other users — with the conflict model, the
+token-handling trade-off, and the edge cases that bite.
 
 ## Note on imported content
 
