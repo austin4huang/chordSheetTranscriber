@@ -1,3 +1,5 @@
+import { newId } from "./ids";
+
 export type LineKind = "chordpro" | "chord-only" | "section" | "blank" | "comment";
 
 export interface SheetLine {
@@ -68,7 +70,7 @@ export interface ChordSheet {
 export function blankSheet(): ChordSheet {
   const now = Date.now();
   return {
-    id: crypto.randomUUID(),
+    id: newId(),
     title: "Untitled",
     key: "C",
     mode: "major",

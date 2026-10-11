@@ -1,5 +1,6 @@
 import type { ChordSheet, SheetLine } from "./types";
 import { parseChord } from "./nashville";
+import { newId } from "./ids";
 
 // The library lives in IndexedDB (object stores `sheets` and `sets`, keyed
 // by `id`). At startup we hydrate everything into an in-memory cache; all
@@ -480,7 +481,7 @@ export function looksLikeChordOnly(line: string): boolean {
 // Discard helper for new-sheet bootstrapping
 export function emptySheetWithDefaults(): ChordSheet {
   return {
-    id: crypto.randomUUID(),
+    id: newId(),
     title: "Untitled",
     key: "C",
     mode: "major",

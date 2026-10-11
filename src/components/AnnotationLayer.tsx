@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { Dispatch, SetStateAction } from "react";
 import type { Stroke, TextNote } from "../lib/types";
 import { getPrefs, updatePrefs } from "../lib/prefs";
+import { newId } from "../lib/ids";
 import "./AnnotationLayer.css";
 
 // Palette shown in the color-picker popover. Black is first as the most
@@ -1057,7 +1058,7 @@ export function AnnotationLayer({
       // anchor element's top-left in host px (current size).
       const [hx, hy] = pointHost(e);
       const a = findAnchorAt(hx, hy);
-      const id = crypto.randomUUID();
+      const id = newId();
       let note: TextNote = { id, x, y, text: "", fontSize, color };
       if (a) {
         if (a.tokenIndex != null) {

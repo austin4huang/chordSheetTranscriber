@@ -10,6 +10,9 @@
 // and frequently inaccurate — treat every import as a draft to verify.
 
 import type { ChordSheet, SheetLine } from "./types";
+import { blankSheet } from "./types";
+import { textToSheet } from "./storage";
+import { newId } from "./ids";
 
 export interface ImportedSheet {
   title: string;
@@ -416,6 +419,27 @@ function parseChordOverLyrics(text: string): ImportedSheet {
 
 const HAS_BRACKET_SECTIONS = /^[ \t]*\[[^\]\n]+\][ \t]*$/m;
 
+// ChordPro — including this app's own `linesToText` output, which is the
+// obvious thing to paste back in. Any of three tells: a metadata directive, a
+// [section: …] header, or an inline chord bracket sitting flush against lyric
+// text ("[F]Everything"). This has to be tested *before* the chord-over-lyrics
+// parsers, because HAS_BRACKET_SECTIONS matches "[section: Verse]" and then
+// every "[F]" at the head of a line is read as another section header,
+// shredding the chord positions.
+const CHORDPRO_DIRECTIVE = /^\{(?:title|key|artist|tempo|time):/m;
+const CHORDPRO_SECTION = /^\[section:\s*[^\]\n]*\][ \t]*$/m;
+// A header like "[Bridge]" sits alone on its line, so requiring a non-space
+// straight after the closing bracket keeps those out.
+const CHORDPRO_INLINE = /\[[A-G][^\]\s]*\]\S/;
+
+function looksLikeChordPro(text: string): boolean {
+  return (
+    CHORDPRO_DIRECTIVE.test(text) ||
+    CHORDPRO_SECTION.test(text) ||
+    CHORDPRO_INLINE.test(text)
+  );
+}
+
 /**
  * Accepts: an Ultimate-Guitar URL (fetched via proxy), pasted page source,
  * raw tab text with [ch]/[tab] markers, or pasted chord text — either the
@@ -457,6 +481,22 @@ export async function importChords(input: string): Promise<ImportedSheet> {
     }
   }
 
+  // Already ChordPro — hand it to the editor's own parser rather than
+  // re-deriving chord positions from text that already states them.
+  if (looksLikeChordPro(text)) {
+    const s = textToSheet(text, blankSheet());
+    if (s.lines.some((l) => l.kind !== "blank" && l.text.trim() !== "")) {
+      return {
+        // blankSheet()'s placeholder means the paste carried no {title:}.
+        title: s.title === "Untitled" ? "Imported song" : s.title,
+        artist: s.artist,
+        key: s.key,
+        mode: s.mode,
+        lines: s.lines,
+      };
+    }
+  }
+
   // Classic "chords above lyrics" with [Section] headers.
   if (HAS_BRACKET_SECTIONS.test(text)) {
     const co = parseChordOverLyrics(text);
@@ -485,7 +525,7 @@ export async function importChords(input: string): Promise<ImportedSheet> {
 
 export function toChordSheet(s: ImportedSheet): ChordSheet {
   return {
-    id: crypto.randomUUID(),
+    id: newId(),
     title: s.title,
     artist: s.artist,
     key: s.key,

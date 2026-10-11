@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChordSheet } from "../lib/types";
+import { newId } from "../lib/ids";
 import type { SongSet } from "../lib/storage";
 import type { AskConflict, AskImportConfirm, ConflictAnswer } from "../App";
 import {
@@ -210,7 +211,7 @@ export function SheetList({
         const fresh = nextUniqueTitle(candidate.title, taken);
         const renamed: ChordSheet = {
           ...candidate,
-          id: crypto.randomUUID(),
+          id: newId(),
           title: fresh,
           createdAt: Date.now(),
           updatedAt: Date.now(),
@@ -229,7 +230,7 @@ export function SheetList({
         : candidate.title;
       const fresh: ChordSheet = {
         ...candidate,
-        id: crypto.randomUUID(),
+        id: newId(),
         title: finalTitle,
         createdAt: candidate.createdAt ?? Date.now(),
         updatedAt: Date.now(),
@@ -259,7 +260,7 @@ export function SheetList({
         const saved = await importMany(payload.sheets as ChordSheet[]);
         if (!saved) return;
         const newSet: SongSet = {
-          id: crypto.randomUUID(),
+          id: newId(),
           name: payload.name || file.name.replace(/\.pdf$/i, ""),
           sheetIds: saved.map((s) => s.id),
           createdAt: Date.now(),
@@ -285,7 +286,7 @@ export function SheetList({
 
       const fallbackName = file.name.replace(/\.pdf$/i, "");
       const incoming: ChordSheet[] = songs.map((p, i) => ({
-        id: crypto.randomUUID(),
+        id: newId(),
         title: p.title || `${fallbackName}${songs.length > 1 ? ` (${i + 1})` : ""}`,
         key: p.key || "C",
         mode: p.mode || "major",
@@ -303,7 +304,7 @@ export function SheetList({
 
       // Multiple songs in one PDF → bundle them into a new set.
       const newSet: SongSet = {
-        id: crypto.randomUUID(),
+        id: newId(),
         name: fallbackName,
         sheetIds: saved.map((s) => s.id),
         createdAt: Date.now(),
@@ -417,7 +418,7 @@ export function SheetList({
     const name = newSetName.trim();
     if (!name) return; // mandatory
     const set: SongSet = {
-      id: crypto.randomUUID(),
+      id: newId(),
       name,
       sheetIds: [],
       createdAt: Date.now(),
