@@ -139,6 +139,26 @@ export function PlayIcon({ size = 14 }: { size?: number }) {
   );
 }
 
+/** Spotify's mark — a filled disc with three stacked arcs. Drawn as one
+ *  filled path (not the stroked `baseIcon` style) so the arcs stay crisp at
+ *  toolbar size. Takes the button's text colour, which the only two states it
+ *  renders in — white and Spotify green — keep within Spotify's permitted
+ *  palette for the mark. */
+export function SpotifyIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="currentColor"
+      stroke="none"
+      aria-hidden="true"
+    >
+      <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm4.586 14.424a.623.623 0 01-.857.207c-2.348-1.435-5.304-1.76-8.785-.964a.622.622 0 11-.277-1.215c3.809-.871 7.077-.496 9.713 1.115a.623.623 0 01.206.857zm1.223-2.722a.78.78 0 01-1.072.257c-2.687-1.652-6.785-2.131-9.965-1.166A.78.78 0 116.32 11.3c3.632-1.102 8.147-.568 11.234 1.33a.78.78 0 01.255 1.072zm.105-2.835C14.692 8.95 9.375 8.775 6.326 9.7a.935.935 0 11-.543-1.79c3.5-1.062 9.372-.857 13.072 1.34a.935.935 0 11-.954 1.607z" />
+    </svg>
+  );
+}
+
 /** Checkmark — the "save / confirm" action. */
 export function CheckIcon({ size = 16 }: { size?: number }) {
   return (

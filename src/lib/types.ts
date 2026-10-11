@@ -63,6 +63,10 @@ export interface ChordSheet {
    *  toggle (App state) that doesn't touch these. */
   displayKey?: string;
   preferFlats?: boolean;
+  /** Bare Spotify track ID (the 22 chars after /track/) for the reference
+   *  recording. Stored as the ID rather than a URL so the embed, the deep
+   *  link, and the spotify: URI can each be built from it. */
+  spotifyTrackId?: string;
   createdAt?: number;     // unset on legacy sheets — fall back to updatedAt
   updatedAt: number;
 }

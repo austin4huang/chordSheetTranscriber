@@ -41,11 +41,17 @@ const BROWSER_UA =
 // pdfjs-dist's worker (vite emits it as a blob URL in some bundles); revisit
 // if pdfjs is removed. `style-src 'unsafe-inline'` is required for the React
 // inline style attributes used throughout the app.
+//
+// `frame-src https://open.spotify.com` is the one exception: the per-song
+// reference-recording dock embeds Spotify's player (see SpotifyDock.tsx). It
+// is deliberately only frame-src — we embed the iframe as served and don't
+// load Spotify's IFrame API, so no script-src exception is needed.
 const CSP =
   "default-src 'self'; " +
   "img-src 'self' data: blob:; " +
   "style-src 'self' 'unsafe-inline'; " +
   "script-src 'self' 'wasm-unsafe-eval'; " +
+  "frame-src https://open.spotify.com; " +
   "worker-src 'self' blob:; " +
   "connect-src 'self'; " +
   "font-src 'self' data:; " +

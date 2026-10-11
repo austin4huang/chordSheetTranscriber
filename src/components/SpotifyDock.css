@@ -1,0 +1,148 @@
+/* Reference-recording dock — the last row of the preview pane's flex column,
+   sitting under the sheet it plays along with rather than spanning the window.
+   flex:0 0 auto gives it its own space, so the scrolling .sheet-render above
+   shrinks to fit instead of having its last lines hidden. Present mode
+   fullscreens .present-overlay instead, which hides the dock but leaves the
+   iframe mounted, so a track already playing keeps playing. */
+.sp-dock {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.6rem;
+  padding: 0.6rem 2.75rem 0.6rem 0.85rem;
+  background: #fff;
+  /* Matches the .sheet-render card it sits beneath. */
+  border: 1px solid #e2e2e2;
+  border-radius: 8px;
+}
+
+.sp-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.6rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0.25rem;
+  color: #555;
+  cursor: pointer;
+}
+.sp-close:hover {
+  background: #f1f3f7;
+  border-color: #e3e6ec;
+}
+
+/* Spotify's Widget Terms require the player to be shown as served and never
+   obscured, so this only sets the width it is allowed to fill — the 152px
+   height is Spotify's own and is set on the element. */
+.sp-embed {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  border-radius: 12px;
+}
+
+.sp-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  flex: 0 0 auto;
+}
+.sp-open {
+  display: inline-block;
+  padding: 0.45rem 0.8rem;
+  border-radius: 999px;
+  background: #1db954;
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+  text-align: center;
+}
+.sp-open:hover { background: #1aa84c; }
+.sp-unlink {
+  background: transparent;
+  border: 1px solid #e3e6ec;
+  border-radius: 6px;
+  padding: 0.3rem 0.6rem;
+  color: #777;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.sp-unlink:hover { color: #9c2f17; border-color: #e0bdb4; }
+
+/* --- unlinked state ------------------------------------------------------ */
+
+.sp-link-form { flex: 1 1 auto; min-width: 0; }
+.sp-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #444;
+  margin-bottom: 0.4rem;
+}
+.sp-link-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.sp-link-row input {
+  flex: 1 1 16rem;
+  min-width: 0;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #d9dde5;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 0.88rem;
+}
+.sp-primary {
+  padding: 0.4rem 0.9rem;
+  border: 0;
+  border-radius: 6px;
+  background: #1db954;
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.sp-primary:disabled { background: #c6cad2; cursor: default; }
+.sp-secondary {
+  font-size: 0.82rem;
+  color: #2a4a8b;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.sp-secondary:hover { text-decoration: underline; }
+.sp-error {
+  margin-top: 0.35rem;
+  font-size: 0.8rem;
+  color: #9c2f17;
+}
+
+/* Narrow screens: the embed often can't reach a Spotify session here (see the
+   note in SpotifyDock.tsx) and drops to a 30s preview, so the handoff to the
+   installed app is the control that always works — give it the full width
+   under the player rather than a column beside it. */
+@media (max-width: 760px) {
+  .sp-dock {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+    padding: 0.6rem 0.7rem 0.7rem;
+  }
+  .sp-actions { flex-direction: row; align-items: center; }
+  .sp-open { flex: 1 1 auto; padding: 0.6rem 0.8rem; font-size: 0.95rem; }
+}
+
+@media print {
+  .sp-dock { display: none; }
+}

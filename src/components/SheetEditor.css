@@ -137,6 +137,9 @@
   line-height: 1;
   background: #3d3d3d;
 }
+/* Dock is showing — tint the Spotify mark so the toggle reads as on, matching
+   its aria-pressed state. */
+.editor-toolbar .tb-icon-btn.is-on { color: #1db954; }
 .tb-label {
   font-size: 0.72rem;
   text-transform: uppercase;

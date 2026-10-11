@@ -17,7 +17,8 @@ import type { AskConflict } from "../App";
 import { noteToPitchClass, keyPrefersFlats, transposeChord, splitChords } from "../lib/nashville";
 import { SheetRenderer } from "./SheetRenderer";
 import { exportSongRenderedPdf } from "../lib/pdfExport";
-import { DownloadIcon, ArrowLeftIcon, XIcon, PresentIcon } from "./icons";
+import { DownloadIcon, ArrowLeftIcon, XIcon, PresentIcon, SpotifyIcon } from "./icons";
+import { SpotifyDock } from "./SpotifyDock";
 import "./SheetEditor.css";
 
 // Chromatic note names by pitch class, in both spellings. Enharmonic keys
@@ -316,6 +317,20 @@ export function SheetEditor({
     preferFlats:
       initial.preferFlats ?? isFlatSpelling(initial.displayKey || initial.key),
   });
+  // Linked reference recording. Written straight through to storage on every
+  // change (same reasoning as displayKey above: it isn't part of the ChordPro
+  // text, so it shouldn't make the editor dirty or wait for a save), and also
+  // folded into `toSave` so a later save doesn't rewrite it from `initial`.
+  const [spotifyTrackId, setSpotifyTrackId] = useState(initial.spotifyTrackId);
+  const [spotifyOpen, setSpotifyOpen] = useState(false);
+  const onSpotifyLink = useCallback(
+    (id: string | undefined) => {
+      setSpotifyTrackId(id);
+      updateSheet(initial.id, { spotifyTrackId: id });
+    },
+    [initial.id],
+  );
+
   // Persist the annotation reference size when it's seeded/changed, so a
   // reload renders existing annotations against the same coordinate space.
   const persistedAnnoRef = useRef(initial.annoRef);
@@ -346,6 +361,7 @@ export function SheetEditor({
       annoRef,
       displayKey,
       preferFlats,
+      spotifyTrackId,
       updatedAt: Date.now(),
     };
 
@@ -598,6 +614,19 @@ export function SheetEditor({
         <div className="tb-divider" />
         <div className="tb-group">
           <button
+            className={`tb-icon-btn${spotifyOpen ? " is-on" : ""}`}
+            onClick={() => setSpotifyOpen((v) => !v)}
+            aria-label="Reference recording"
+            aria-pressed={spotifyOpen}
+            title={
+              spotifyTrackId
+                ? "Reference recording — play along"
+                : "Link a reference recording from Spotify"
+            }
+          >
+            <SpotifyIcon />
+          </button>
+          <button
             className="tb-icon-btn"
             onClick={onExport}
             disabled={exporting}
@@ -833,6 +862,17 @@ export function SheetEditor({
             onAnnoToolbarCollapsedChange={onAnnoToolbarCollapsedChange}
             rootRef={renderRef}
           />
+          {/* Inside the preview pane, not the window: the dock belongs to the
+              sheet it plays along with, and keeping it here leaves the editor
+              textarea full height. */}
+          {spotifyOpen && (
+            <SpotifyDock
+              sheet={sheet}
+              trackId={spotifyTrackId}
+              onLink={onSpotifyLink}
+              onClose={() => setSpotifyOpen(false)}
+            />
+          )}
         </div>
       </div>
       {presenting && (
