@@ -137,7 +137,9 @@
     flex-direction: column;
     align-items: stretch;
     gap: 0.5rem;
-    padding: 0.6rem 0.7rem 0.7rem;
+    /* Clear the home indicator / browser chrome at the foot of the screen so
+       the "Open in Spotify" button is never half-hidden behind it. */
+    padding: 0.6rem 0.7rem calc(0.7rem + env(safe-area-inset-bottom, 0px));
   }
   .sp-actions { flex-direction: row; align-items: center; }
   .sp-open { flex: 1 1 auto; padding: 0.6rem 0.8rem; font-size: 0.95rem; }

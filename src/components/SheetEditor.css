@@ -1,4 +1,13 @@
-.editor-root { display: flex; flex-direction: column; height: 100vh; }
+/* 100dvh (with the 100vh fallback) tracks the *dynamic* viewport: plain 100vh
+   on mobile Safari means the tall viewport it has when the toolbar is
+   collapsed, so the foot of this column — the Spotify dock — sits underneath
+   the browser chrome. Same pairing as .list-root in SheetList.css. */
+.editor-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+}
 .editor-toolbar {
   position: relative;
   display: flex;
@@ -374,7 +383,16 @@
   background: #fff;
   line-height: 1.45;
 }
-.editor-pane > .sheet-render { overflow: auto; }
+/* Grow to fill the pane, but stay shrinkable: .sheet-render carries a
+   min-height of 400px for its standalone card look, and in this flex column
+   that floor stops it yielding space to the Spotify dock below — on a short
+   screen the dock then overflows the pane, which is overflow:hidden, and gets
+   clipped. min-height:0 lets the sheet give way instead. */
+.editor-pane > .sheet-render {
+  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
 
 /* Distraction-free present mode: only the sheet, full viewport. */
 .present-overlay {
